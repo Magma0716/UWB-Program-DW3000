@@ -55,7 +55,7 @@ static unsigned long lastBroadcastTime = 0;  // Last UDP broadcast timestamp
 #define PIN_IRQ 34
 #define PIN_SS 4
 
-#define RNG_DELAY_MS 10
+#define RNG_DELAY_MS 200
 #define TX_ANT_DLY 16385
 #define RX_ANT_DLY 16385
 #define ALL_MSG_COMMON_LEN (10)
@@ -74,35 +74,55 @@ static unsigned long lastBroadcastTime = 0;  // Last UDP broadcast timestamp
 #define JSON_BUFFER_SIZE 512
 
 /* Default communication configuration. We use default non-STS DW mode. */
+/* 未加密 */
 static dwt_config_t config = {
-    5,                /* Channel number. */
-    DWT_PLEN_128,     /* Preamble length. Used in TX only. */
-    DWT_PAC8,         /* Preamble acquisition chunk size. Used in RX only. */
-    9,                /* TX preamble code. Used in TX only. */
-    9,                /* RX preamble code. Used in RX only. */
-    1,                /* 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type */
-    DWT_BR_6M8,       /* Data rate. */
-    DWT_PHRMODE_STD,  /* PHY header mode. */
-    DWT_PHRRATE_STD,  /* PHY header rate. */
-    (129 + 8 - 8),    /* SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. */
-    DWT_STS_MODE_OFF, /* STS disabled */
-    DWT_STS_LEN_64,   /* STS length see allowed values in Enum dwt_sts_lengths_e */
-    DWT_PDOA_M0       /* PDOA mode off */
+    5,                // Channel number.
+    DWT_PLEN_128,     // Preamble length. Used in TX only.
+    DWT_PAC8,         // Preamble acquisition chunk size. Used in RX only.
+    9,                // TX preamble code. Used in TX only.
+    9,                // RX preamble code. Used in RX only.
+    1,                // 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type
+    DWT_BR_6M8,       // Data rate.
+    DWT_PHRMODE_STD,  // PHY header mode.
+    DWT_PHRRATE_STD,  // PHY header rate.
+    (129 + 8 - 8),    // SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only.
+    DWT_STS_MODE_OFF, // STS disabled
+    DWT_STS_LEN_64,   // STS length see allowed values in Enum dwt_sts_lengths_e
+    DWT_PDOA_M0       // PDOA mode off
 };
+
+
+/* 加密 
+static dwt_config_t config = {
+    5,                // Channel number. 
+    DWT_PLEN_128,     // Preamble length. 
+    DWT_PAC8,         // Preamble acquisition chunk size. 
+    9,                // TX preamble code. 
+    9,                // RX preamble code. 
+    3,                // SFD type (4z 8 symbol SDF type)
+    DWT_BR_6M8,       // Data rate. 
+    DWT_PHRMODE_STD,  // PHY header mode. 
+    DWT_PHRRATE_STD,  // PHY header rate. 
+    (128 + 1 + 64 - 8),// SFD timeout. 
+    DWT_STS_MODE_1,   // MODE_1 Payload + STS 
+    DWT_STS_LEN_64,  // STS lengths
+    DWT_PDOA_M0       // PDOA mode off 
+};
+*/
 
 /* SS-TWR Message Format
  * Poll message from Tag to Anchor:
  * +-----------+--------+----------+-----------+------------+------------+------+--------+
- * | Byte 0-1  | Byte 2 | Byte 3-4 | Byte 5-6  | Byte 7-8   | Byte 9    | 10-11|
+ * | Byte 0-1  | Byte 2 | Byte 3-4 | Byte 5-6  | Byte 7-8   | Byte 9     | 10-11|
  * +-----------+--------+----------+-----------+------------+------------+------+--------+
- * | 0x41, 0x88| Seq    | PAN ID   | Tag ADDR  | Anch ADDR  | 0xE0      | CRC  |
+ * | 0x41, 0x88| Seq    | PAN ID   | Tag ADDR  | Anch ADDR  | 0xE0       | CRC  |
  * +-----------+--------+----------+-----------+------------+------------+------+--------+
  */
  /* Response message from Anchor to Tag:
  * +-----------+--------+----------+-----------+------------+------------+----------------+----------------+--------+
- * | Byte 0-1  | Byte 2 | Byte 3-4 | Byte 5-6  | Byte 7-8   | Byte 9    | Byte 10-13    | Byte 14-17    | 18-19 |
+ * | Byte 0-1  | Byte 2 | Byte 3-4 | Byte 5-6  | Byte 7-8   | Byte 9     | Byte 10-13     | Byte 14-17     | 18-19  |
  * +-----------+--------+----------+-----------+------------+------------+----------------+----------------+--------+
- * | 0x41, 0x88| Seq    | PAN ID   | Anch ADDR | Tag ADDR   | 0xE1      | Poll RX TS    | Resp TX TS    | CRC   |
+ * | 0x41, 0x88| Seq    | PAN ID   | Anch ADDR | Tag ADDR   | 0xE1       | Poll RX TS     | Resp TX TS     | CRC    |
  * +-----------+--------+----------+-----------+------------+------------+----------------+----------------+--------+
  *
  * Field Description:
@@ -115,6 +135,10 @@ static dwt_config_t config = {
  * - Resp TX TS: Timestamp of Response message transmission
  * - RES: Reserved bytes
  */
+
+/* AES
+static uint8_t tx_poll_msg[] = {0x49, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 0, 0, 0xE0, 0, 0};
+*/ 
 static uint8_t tx_poll_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 0, 0, 0xE0, 0, 0};
 static uint8_t rx_resp_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 0, 0, TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
@@ -130,6 +154,34 @@ static bool isExpectedFrame(const uint8_t *frame, const uint32_t len);
 void setup()
 {
   UART_init();
+  /* STS 時間戳加密 
+  // key
+  static dwt_sts_cp_key_t sts_key = {
+    0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468
+  };
+
+  // IV
+  static dwt_sts_cp_iv_t sts_iv = {
+    0x11223344, 0x55667788, 0x9900AABB
+  };
+
+  dwt_configurestskey(&sts_key);
+  dwt_configurestsiv(&sts_iv);
+  dwt_configurestsloadiv();
+  */
+
+  /* AES 資料加密
+  dwt_aes_config_t aes_config = {
+    .key = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
+    },
+    .key_index = 1,
+    .mic_size = 8,           // 認證碼長度 (4, 8, 16)
+    .mode = DWT_AES_CCM_128  // 802.15.4 安全模式
+  };
+  dwt_configure_aes(&aes_config);
+  */
 
 #ifdef ENABLE_WIFI
   // Initialize WiFi
@@ -206,6 +258,9 @@ void setup()
 
 void loop()
 {
+  // 重製STS
+  // dwt_configurestsloadiv();
+
   // 設定目前要測距的 Anchor ID
   tx_poll_msg[RESP_MSG_DST_IDX] = ANCHOR_LIST[currentAnchorIndex][0];
   tx_poll_msg[RESP_MSG_DST_IDX + 1] = ANCHOR_LIST[currentAnchorIndex][1];
@@ -218,6 +273,10 @@ void loop()
   tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
   dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
   dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0); /* Zero offset in TX buffer. */
+  
+  // Payload 轉亂碼 + MIC 認證碼
+  // dwt_do_aes_encryption();
+  
   dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1);          /* Zero offset in TX buffer, ranging. */
 
   /* Start transmission, indicating that a response is expected so that reception is enabled automatically after the frame is sent and the delay
@@ -253,6 +312,14 @@ void loop()
         uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
         int32_t rtd_init, rtd_resp;
         float clockOffsetRatio;
+
+        /*
+            poll_tx_ts : T1
+            poll_rx_ts : T2
+            resp_tx_ts : T3
+            resp_rx_ts : T4
+            Tprop = ( (T4-T1) - (T3-T2) ) / 2
+        */
 
         /* Retrieve poll transmission and response reception timestamps. See NOTE 9 below. */
         poll_tx_ts = dwt_readtxtimestamplo32();

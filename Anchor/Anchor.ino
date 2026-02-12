@@ -19,38 +19,56 @@ extern SPISettings _fastSPI;
 #define RESP_MSG_POLL_RX_TS_IDX 10
 #define RESP_MSG_RESP_TX_TS_IDX 14
 #define RESP_MSG_TS_LEN 4
-#define POLL_RX_TO_RESP_TX_DLY_UUS 450
+#define POLL_RX_TO_RESP_TX_DLY_UUS 600
 
 /* Default communication configuration. We use default non-STS DW mode. */
+/* 未加密 */
 static dwt_config_t config = {
-    5,                /* Channel number. */
-    DWT_PLEN_128,     /* Preamble length. Used in TX only. */
-    DWT_PAC8,         /* Preamble acquisition chunk size. Used in RX only. */
-    9,                /* TX preamble code. Used in TX only. */
-    9,                /* RX preamble code. Used in RX only. */
-    1,                /* 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type */
-    DWT_BR_6M8,       /* Data rate. */
-    DWT_PHRMODE_STD,  /* PHY header mode. */
-    DWT_PHRRATE_STD,  /* PHY header rate. */
-    (129 + 8 - 8),    /* SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. */
-    DWT_STS_MODE_OFF, /* STS disabled */
-    DWT_STS_LEN_64,   /* STS length see allowed values in Enum dwt_sts_lengths_e */
-    DWT_PDOA_M0       /* PDOA mode off */
+    5,                // Channel number.
+    DWT_PLEN_128,     // Preamble length. Used in TX only.
+    DWT_PAC8,         // Preamble acquisition chunk size. Used in RX only.
+    9,                // TX preamble code. Used in TX only.
+    9,                // RX preamble code. Used in RX only.
+    1,                // 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type
+    DWT_BR_6M8,       // Data rate.
+    DWT_PHRMODE_STD,  // PHY header mode.
+    DWT_PHRRATE_STD,  // PHY header rate.
+    (129 + 8 - 8),    // SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only.
+    DWT_STS_MODE_OFF, // STS disabled
+    DWT_STS_LEN_64,   // STS length see allowed values in Enum dwt_sts_lengths_e
+    DWT_PDOA_M0       // PDOA mode off
 };
 
+/* 加密 
+static dwt_config_t config = {
+    5,                // Channel number. 
+    DWT_PLEN_128,     // Preamble length. 
+    DWT_PAC8,         // Preamble acquisition chunk size. 
+    9,                // TX preamble code. 
+    9,                // RX preamble code. 
+    3,                // SFD type (4z 8 symbol SDF type)
+    DWT_BR_6M8,       // Data rate. 
+    DWT_PHRMODE_STD,  // PHY header mode. 
+    DWT_PHRRATE_STD,  // PHY header rate. 
+    (128 + 1 + 64 - 8),// SFD timeout. 
+    DWT_STS_MODE_1,   // MODE_1 Payload + STS 
+    DWT_STS_LEN_64,  // STS lengths
+    DWT_PDOA_M0       // PDOA mode off 
+};
+*/
 /* SS-TWR Message Format
  * Poll message from Tag to Anchor:
  * +-----------+--------+----------+-----------+------------+------------+------+--------+
- * | Byte 0-1  | Byte 2 | Byte 3-4 | Byte 5-6  | Byte 7-8   | Byte 9    | 10-11|
+ * | Byte 0-1  | Byte 2 | Byte 3-4 | Byte 5-6  | Byte 7-8   | Byte 9     | 10-11|
  * +-----------+--------+----------+-----------+------------+------------+------+--------+
- * | 0x41, 0x88| Seq    | PAN ID   | Tag ADDR  | Anch ADDR  | 0xE0      | RES  |
+ * | 0x41, 0x88| Seq    | PAN ID   | Tag ADDR  | Anch ADDR  | 0xE0       | RES  |
  * +-----------+--------+----------+-----------+------------+------------+------+--------+
  */
 /* Response message from Anchor to Tag:
  * +-----------+--------+----------+-----------+------------+------------+----------------+----------------+--------+
- * | Byte 0-1  | Byte 2 | Byte 3-4 | Byte 5-6  | Byte 7-8   | Byte 9    | Byte 10-13    | Byte 14-17    | 18-19 |
+ * | Byte 0-1  | Byte 2 | Byte 3-4 | Byte 5-6  | Byte 7-8   | Byte 9     | Byte 10-13     | Byte 14-17     | 18-19  |
  * +-----------+--------+----------+-----------+------------+------------+----------------+----------------+--------+
- * | 0x41, 0x88| Seq    | PAN ID   | Anch ADDR | Tag ADDR   | 0xE1      | Poll RX TS    | Resp TX TS    | RES   |
+ * | 0x41, 0x88| Seq    | PAN ID   | Anch ADDR | Tag ADDR   | 0xE1       | Poll RX TS     | Resp TX TS     | RES    |
  * +-----------+--------+----------+-----------+------------+------------+----------------+----------------+--------+
  *
  * Field Description:
@@ -77,6 +95,22 @@ extern dwt_txconfig_t txconfig_options;
 void setup()
 {
   UART_init();
+
+  /* STS 時間戳加密 
+  // key
+  static dwt_sts_cp_key_t sts_key = {
+    0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468
+  };
+
+  // IV
+  static dwt_sts_cp_iv_t sts_iv = {
+    0x11223344, 0x55667788, 0x9900AABB
+  };
+  
+  dwt_configurestskey(&sts_key);
+  dwt_configurestsiv(&sts_iv);
+  dwt_configurestsloadiv();
+  */
 
   _fastSPI = SPISettings(16000000L, MSBFIRST, SPI_MODE0);
 
@@ -137,6 +171,17 @@ void loop()
 
   if (status_reg & SYS_STATUS_RXFCG_BIT_MASK)
   {
+    // STS 檢查
+    /*
+    uint32_t status = dwt_read32bitreg(SYS_STATUS_ID);
+    if (!(status & SYS_STATUS_CP_LOCK_BIT_MASK)) 
+    {
+        Serial.println("STS 驗證失敗！嘗試重置 IV 並丟棄包");
+        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
+        dwt_configurestsloadiv(); // 嘗試重新載入 IV 初始值以尋求同步
+        return;
+    }
+    */
     uint32_t frame_len;
 
     /* Clear good RX frame event in the DW IC status register. */

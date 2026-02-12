@@ -35,7 +35,7 @@ void setup() {
   }
 
   /* 關鍵步驟：開啟混雜模式，接收所有封包 */
-  dwt_setframefilter(DWT_FF_NOT_ACCEPT); // 關閉過濾
+  dwt_setframefilter(DWT_FF_NOT_ACCEPT);
   
   // 如果你的函式庫支援，直接進入 RX 模式
   dwt_rxenable(DWT_START_RX_IMMEDIATE);
