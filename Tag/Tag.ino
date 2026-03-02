@@ -1,41 +1,83 @@
 #include "dw3000.h"
 
+// ========= 數據修改區 =========
+
+// 延遲時間
+#define POLL_TX_TO_RESP_RX_DLY_UUS 500  // Tround (未加密:240)
+#define RESP_RX_TIMEOUT_UUS 1500         // T4 (未加密:400)
+
+// Tag 強迫休息時間
+#define RNG_DELAY_MS 300  // <-- 改小能讓輸出變快
+
+// Anchor 數量
+#define NUM_ANCHORS 1
+
+// STS 加密 (for PHR ms)
+#define STS_ENCRYPTION true
+
+// AES 加密 (for Payload distance)
+#define AES_ENCRYPTION false
+
+// WiFi
+#define tmp_ssid "Alan6711"
+#define tmp_password "bbb520111"
+
+// position setting
+#define UDP_BROADCAST_INTERVAL 15  // Minimum interval between UDP broadcasts (ms)
+#define ANCHOR_DATA_TIMEOUT 5000   // Timeout for anchor data in milliseconds
+
+// ==============================
+
+
 /* RX for Tag */
-const uint8_t PAN_ID[] = { 0xCA, 0xDE };     // PAN_ID
-const uint8_t TAG_ADDR[] = { 'T', '1' };      // Tag Address
+const uint8_t PAN_ID[] = { 0xCA, 0xDE };
+const uint8_t TAG_ADDR[] = { 'T', '1' };
+
 
 /* Anchor List Settings */
-#define NUM_ANCHORS 1  // 設定 Anchor 的數量
-static const char ANCHOR_LIST[NUM_ANCHORS][2] = {
-    {'A', '1'},  // Anchor 1
-    //{'A', '2'},  // Anchor 2
-    //{'A', '3'}   // Anchor 3
-};
+#if NUM_ANCHORS == 1
+    static const char ANCHOR_LIST[NUM_ANCHORS][2] = {
+        {'A', '1'},  // Anchor 1
+    };
+#elif NUM_ANCHORS == 2
+    static const char ANCHOR_LIST[NUM_ANCHORS][2] = {
+        {'A', '1'},  // Anchor 1
+        {'A', '2'},  // Anchor 2
+    };
+#elif NUM_ANCHORS == 3
+    static const char ANCHOR_LIST[NUM_ANCHORS][2] = {
+        {'A', '1'},  // Anchor 1
+        {'A', '2'},  // Anchor 2
+        {'A', '3'}   // Anchor 3
+    };
+#endif
+
 static int currentAnchorIndex = 0;  // 目前正在測距的 Anchor 索引
+
 
 // WiFi Feature Flag - Uncomment to enable WiFi functionality
 #define ENABLE_WIFI
 
 #ifdef ENABLE_WIFI
-#include <WiFi.h>
-#include <WiFiUdp.h>
+    #include <WiFi.h>
+    #include <WiFiUdp.h>
 
-/* WiFi Credentials */
-const char* ssid = "Alan6711";
-const char* password = "bbb520111";
+    /* WiFi Credentials */
+    const char* ssid = tmp_ssid;
+    const char* password = tmp_password;
 
-/* UDP Broadcast Settings */
-WiFiUDP udp;
-const int UDP_PORT = 8001;  // Choose a UDP port
-const IPAddress BROADCAST_IP(255, 255, 255, 255);  // Broadcast address
+    /* UDP Broadcast Settings */
+    WiFiUDP udp;
+    const int UDP_PORT = 8001;  // Choose a UDP port
+    const IPAddress BROADCAST_IP(255, 255, 255, 255);  // Broadcast address
 #endif
 
+
 /* Position System Settings */
-#define MAX_ANCHORS 10          // Maximum number of anchors to track
-#define MIN_ANCHORS_TO_SEND 1   // Minimum anchors required for position calculation
-#define ANCHOR_DATA_TIMEOUT 5000 // Timeout for anchor data in milliseconds
-#define MAX_VALID_DISTANCE 8.0   // Maximum valid distance in meters
-#define UDP_BROADCAST_INTERVAL 15 // Minimum interval between UDP broadcasts (ms)
+#define MAX_ANCHORS 10            // Maximum number of anchors to track
+#define MIN_ANCHORS_TO_SEND 1     // Minimum anchors required for position calculation
+#define MAX_VALID_DISTANCE 8.0    // Maximum valid distance in meters
+
 
 /* Anchor Data Structure */
 struct AnchorData {
@@ -46,6 +88,7 @@ struct AnchorData {
     bool active;      // Whether this anchor is active
 };
 
+
 /* Global Variables for Position System */
 static AnchorData anchorArray[MAX_ANCHORS];
 static int activeAnchors = 0;
@@ -55,7 +98,6 @@ static unsigned long lastBroadcastTime = 0;  // Last UDP broadcast timestamp
 #define PIN_IRQ 34
 #define PIN_SS 4
 
-#define RNG_DELAY_MS 200
 #define TX_ANT_DLY 16385
 #define RX_ANT_DLY 16385
 #define ALL_MSG_COMMON_LEN (10)
@@ -67,48 +109,53 @@ static unsigned long lastBroadcastTime = 0;  // Last UDP broadcast timestamp
 #define RESP_MSG_POLL_RX_TS_IDX 10
 #define RESP_MSG_RESP_TX_TS_IDX 14
 #define RESP_MSG_TS_LEN 4
-#define POLL_TX_TO_RESP_RX_DLY_UUS 240
-#define RESP_RX_TIMEOUT_UUS 400
 
 /* JSON buffer size */
 #define JSON_BUFFER_SIZE 512
 
-/* Default communication configuration. We use default non-STS DW mode. */
-/* 未加密 */
-static dwt_config_t config = {
-    5,                // Channel number.
-    DWT_PLEN_128,     // Preamble length. Used in TX only.
-    DWT_PAC8,         // Preamble acquisition chunk size. Used in RX only.
-    9,                // TX preamble code. Used in TX only.
-    9,                // RX preamble code. Used in RX only.
-    1,                // 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type
-    DWT_BR_6M8,       // Data rate.
-    DWT_PHRMODE_STD,  // PHY header mode.
-    DWT_PHRRATE_STD,  // PHY header rate.
-    (129 + 8 - 8),    // SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only.
-    DWT_STS_MODE_OFF, // STS disabled
-    DWT_STS_LEN_64,   // STS length see allowed values in Enum dwt_sts_lengths_e
-    DWT_PDOA_M0       // PDOA mode off
-};
-
-
-/* 加密 
-static dwt_config_t config = {
-    5,                // Channel number. 
-    DWT_PLEN_128,     // Preamble length. 
-    DWT_PAC8,         // Preamble acquisition chunk size. 
-    9,                // TX preamble code. 
-    9,                // RX preamble code. 
-    3,                // SFD type (4z 8 symbol SDF type)
-    DWT_BR_6M8,       // Data rate. 
-    DWT_PHRMODE_STD,  // PHY header mode. 
-    DWT_PHRRATE_STD,  // PHY header rate. 
-    (128 + 1 + 64 - 8),// SFD timeout. 
-    DWT_STS_MODE_1,   // MODE_1 Payload + STS 
-    DWT_STS_LEN_64,  // STS lengths
-    DWT_PDOA_M0       // PDOA mode off 
-};
-*/
+/* STS Encryption */
+#if STS_ENCRYPTION == false
+    /*
+    (未加密)
+    Default communication configuration. We use default non-STS DW mode.
+    */
+    static dwt_config_t config = {
+        5,                // Channel number.
+        DWT_PLEN_128,     // Preamble length. Used in TX only.
+        DWT_PAC8,         // Preamble acquisition chunk size. Used in RX only.
+        9,                // TX preamble code. Used in TX only.
+        9,                // RX preamble code. Used in RX only.
+        1,                // 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type
+        DWT_BR_6M8,       // Data rate.
+        DWT_PHRMODE_STD,  // PHY header mode.
+        DWT_PHRRATE_STD,  // PHY header rate.
+        (129 + 8 - 8),    // SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only.
+        DWT_STS_MODE_OFF, // STS disabled
+        DWT_STS_LEN_64,   // STS length see allowed values in Enum dwt_sts_lengths_e
+        DWT_PDOA_M0       // PDOA mode off
+    };
+#else
+    /*
+    (加密)
+    Configuration option 33. 
+    Channel 5, PRF 64M, Preamble Length 128, PAC 8, Preamble code 9, Data Rate 6.8M, STS Length 128
+    */
+    dwt_config_t config = {
+        5,                // Channel number. 
+        DWT_PLEN_128,     // Preamble length. 
+        DWT_PAC8,         // Preamble acquisition chunk size. 
+        9,                // TX preamble code. 
+        9,                // RX preamble code. 
+        3,                // SFD type (4z 8 symbol SDF type)
+        DWT_BR_6M8,       // Data rate. 
+        DWT_PHRMODE_STD,  // PHY header mode. 
+        DWT_PHRRATE_STD,  // PHY header rate. 
+        129,              // SFD timeout. 
+        DWT_STS_MODE_1,   // MODE_1 Payload + STS 
+        DWT_STS_LEN_128,  // STS lengths
+        DWT_PDOA_M0       // PDOA mode off 
+    };
+#endif
 
 /* SS-TWR Message Format
  * Poll message from Tag to Anchor:
@@ -153,24 +200,27 @@ static bool isExpectedFrame(const uint8_t *frame, const uint32_t len);
 
 void setup()
 {
-  UART_init();
-  /* STS 時間戳加密 
-  // key
-  static dwt_sts_cp_key_t sts_key = {
-    0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468
-  };
+  UART_init();//Serial.begin(115200);
+  
+  /* STS 時間戳加密 */
+  if(STS_ENCRYPTION){
+    // key
+    static dwt_sts_cp_key_t sts_key = {
+        0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468
+    };
 
-  // IV
-  static dwt_sts_cp_iv_t sts_iv = {
-    0x11223344, 0x55667788, 0x9900AABB
-  };
+    // IV
+    static dwt_sts_cp_iv_t sts_iv = {
+        0x11223344, 0x55667788, 0x9900AABB
+    };
+    dwt_configurestskey(&sts_key);
+    dwt_configurestsiv(&sts_iv);
+    dwt_configurestsloadiv();
+  }
+  dwt_configure(&config);
 
-  dwt_configurestskey(&sts_key);
-  dwt_configurestsiv(&sts_iv);
-  dwt_configurestsloadiv();
-  */
-
-  /* AES 資料加密
+  /* AES 資料加密 */
+  /*
   dwt_aes_config_t aes_config = {
     .key = {
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 
@@ -258,9 +308,6 @@ void setup()
 
 void loop()
 {
-  // 重製STS
-  // dwt_configurestsloadiv();
-
   // 設定目前要測距的 Anchor ID
   tx_poll_msg[RESP_MSG_DST_IDX] = ANCHOR_LIST[currentAnchorIndex][0];
   tx_poll_msg[RESP_MSG_DST_IDX + 1] = ANCHOR_LIST[currentAnchorIndex][1];
@@ -310,10 +357,13 @@ void loop()
       if (isExpectedFrame(rx_buffer, frame_len))
       {
         uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
-        int32_t rtd_init, rtd_resp;
+        int32_t Tround, Treply;
         float clockOffsetRatio;
 
         /*
+            e.g. poll_tx_ts is means from transmit poll
+            e.g. poll_rx_ts is means receive poll 
+
             poll_tx_ts : T1
             poll_rx_ts : T2
             resp_tx_ts : T3
@@ -333,11 +383,12 @@ void loop()
         resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &resp_tx_ts);
 
         /* Compute time of flight and distance, using clock offset ratio to correct for differing local and remote clock rates */
-        rtd_init = resp_rx_ts - poll_tx_ts;
-        rtd_resp = resp_tx_ts - poll_rx_ts;
+        Tround = resp_rx_ts - poll_tx_ts;
+        Treply = resp_tx_ts - poll_rx_ts;
 
-        tof = ((rtd_init - rtd_resp * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
+        tof = ((Tround - Treply * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
         distance = tof * SPEED_OF_LIGHT;
+
         char name[3] = { 0 };
         memcpy(name, rx_buffer + RESP_MSG_SRC_IDX, RESP_MSG_SRC_LEN);
 

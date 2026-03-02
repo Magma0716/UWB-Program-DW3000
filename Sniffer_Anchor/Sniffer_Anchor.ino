@@ -1,68 +1,110 @@
 #include "dw3000.h"
-#include "SPI.h"
 
 #define PIN_RST 27
 #define PIN_IRQ 34
 #define PIN_SS 4
 
-extern SPISettings _fastSPI;
-
+// 加密
 static dwt_config_t config = {
-    5,                /* Channel number. */
-    DWT_PLEN_128,     /* Preamble length. */
-    DWT_PAC8,         /* Preamble acquisition chunk size. */
-    9,                /* TX preamble code. */
-    9,                /* RX preamble code. */
-    1,                /* NSS SFD */
-    DWT_BR_6M8,       /* Data rate. */
-    DWT_PHRMODE_STD,  /* PHY header mode. */
-    DWT_PHRRATE_STD,  /* PHY header rate. */
-    (129 + 8 - 8),    /* SFD timeout */
-    DWT_STS_MODE_OFF, /* STS disabled */
-    DWT_STS_LEN_64,   /* STS length */
-    DWT_PDOA_M0       /* PDOA mode off */
+    5,                // Channel
+    DWT_PLEN_128,     // Preamble Length
+    DWT_PAC8,         // PAC
+    9,                // TX Code
+    9,                // RX Code
+    3,                // SFD Type (STS 模式請用 3)
+    DWT_BR_6M8,       // Data Rate
+    DWT_PHRMODE_STD,  // PHR Mode
+    DWT_PHRRATE_STD,  // PHR Rate
+    (129 + 8 - 8),    // SFD timeout
+    DWT_STS_MODE_1,   // STS Mode 1 (必須與通訊雙方一致)
+    DWT_STS_LEN_128,  // STS Length
+    DWT_PDOA_M0       // PDOA Off
 };
 
+/* STS 密鑰與 IV (必須與通訊雙方一致，否則會 CP_LOCK 失敗) */
+static dwt_sts_cp_key_t sts_key = {0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468};
+static dwt_sts_cp_iv_t sts_iv = {0x11223344, 0x55667788, 0x9900AABB};
+
 void setup() {
-  Serial.begin(115200); // 用於 Wireshark 傳輸
-  
-  _fastSPI = SPISettings(16000000L, MSBFIRST, SPI_MODE0);
-  spiBegin(PIN_IRQ, PIN_RST);
-  spiSelect(PIN_SS);
+    
+    // 1. 初始化 SPI 與 DW3000
+    Serial.begin(115200);
+    spiBegin(PIN_IRQ, PIN_RST);
+    spiSelect(PIN_SS);
+    pinMode(PIN_RST, OUTPUT);
+    digitalWrite(PIN_RST, LOW); delay(10); digitalWrite(PIN_RST, HIGH); delay(100);
+    if (dwt_initialise(DWT_DW_IDLE) == DWT_ERROR) {
+        Serial.println("DW3000 初始化失敗");
+        while (1);
+    }
 
-  if (dwt_initialise(DWT_DW_INIT) == DWT_ERROR || dwt_configure(&config) == DWT_ERROR) {
-    while (1); 
-  }
+    // 2. 配置 UWB 參數
+    dwt_configure(&config);
 
-  /* 關鍵步驟：開啟混雜模式，接收所有封包 */
-  dwt_setframefilter(DWT_FF_NOT_ACCEPT);
-  
-  // 如果你的函式庫支援，直接進入 RX 模式
-  dwt_rxenable(DWT_START_RX_IMMEDIATE);
+    // 3. 【正確寫法】關閉幀過濾，進入混雜模式 (Sniffer 核心)
+    dwt_configureframefilter(DWT_FF_DISABLE, 0); 
+
+    // 4. 配置加密參數 (確保能解開 STS)
+    dwt_configurestskey(&sts_key);
+    dwt_configurestsiv(&sts_iv);
+    dwt_configurestsloadiv(); // 加載初始計數器
+
+    // 5. 開啟接收
+    dwt_rxenable(DWT_START_RX_IMMEDIATE);
+    Serial.println("UWB Sniffer 已啟動，監聽中...");
 }
 
 void loop() {
-  uint32_t status_reg = dwt_read32bitreg(SYS_STATUS_ID);
+    uint32_t status;
+    static uint8_t rx_buffer[1024];
+    static int fail_streak = 0;
 
-  if (status_reg & SYS_STATUS_RXFCG_BIT_MASK) {
-    uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
-    uint8_t rx_buffer[1024];
+    // 讀取狀態寄存器
+    status = dwt_read32bitreg(SYS_STATUS_ID);
 
-    if (frame_len > 0 && frame_len <= 1024) {
-      dwt_readrxdata(rx_buffer, frame_len, 0);
+    // A. 成功接收封包
+    if (status & SYS_STATUS_RXFCG_BIT_MASK) {
+        
+        if (!(status & SYS_STATUS_CP_LOCK_BIT_MASK)) {
+            if (!(status & SYS_STATUS_CP_LOCK_BIT_MASK)) {
+                fail_streak++;
+                // 只有連續失敗時才重置，避免對抗正確的同步
+                if (fail_streak < 5) { 
+                    dwt_configurestsloadiv(); 
+                }
+            } else {
+                fail_streak = 0; // 一旦成功就歸零
+            }
+        }
+        
+        uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFL_MASK_1023;
+        
+        if (frame_len <= sizeof(rx_buffer)) {
+            dwt_readrxdata(rx_buffer, frame_len, 0);
 
-      // 格式：[長度(2 bytes)][原始資料] -> 方便 PC 端解析
-      Serial.write((uint8_t)(frame_len & 0xFF));
-      Serial.write((uint8_t)((frame_len >> 8) & 0xFF));
-      Serial.write(rx_buffer, frame_len);
+            // 檢查 STS 狀態 (CP_LOCK)
+            bool sts_ok = (status & SYS_STATUS_CP_LOCK_BIT_MASK);
+            
+            Serial.print("[Sniffer] 收到封包 | 長度: ");
+            Serial.print(frame_len);
+            Serial.print(sts_ok ? " | STS: OK" : " | STS: FAIL (IV未同步)");
+            
+            // 印出 Hex
+            Serial.print(" | DATA: ");
+            for (int i = 0; i < frame_len; i++) {
+                Serial.printf("%02X ", rx_buffer[i]);
+            }
+            Serial.println();
+        }
+
+        // 清除狀態並重啟接收
+        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_CP_LOCK_BIT_MASK);
+        dwt_rxenable(DWT_START_RX_IMMEDIATE);
     }
-
-    // 清除狀態並重啟接收
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
-    dwt_rxenable(DWT_START_RX_IMMEDIATE);
-  } 
-  else if (status_reg & SYS_STATUS_ALL_RX_ERR) {
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
-    dwt_rxenable(DWT_START_RX_IMMEDIATE);
-  }
+    // 發生錯誤或超時
+    else if (status & (SYS_STATUS_ALL_RX_ERR | SYS_STATUS_ALL_RX_TO)) {
+        // 清除錯誤並重啟接收，繼續監聽
+        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR | SYS_STATUS_ALL_RX_TO | SYS_STATUS_CP_LOCK_BIT_MASK);
+        dwt_rxenable(DWT_START_RX_IMMEDIATE);
+    }
 }

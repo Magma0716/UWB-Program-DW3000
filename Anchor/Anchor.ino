@@ -1,10 +1,26 @@
 #include "dw3000.h"
 #include "SPI.h"
 
+// ========= 數據修改區 =========
+
+// 延遲時間
+#define POLL_RX_TO_RESP_TX_DLY_UUS 1000  // Treply (未加密:600)
+
+// Anchor 名稱 (e.g. A1, A2, A3...)
+const uint8_t ANCHOR_ADDR[] = { 'A', '1' };
+
+// STS 加密 (for PHR ms)
+#define STS_ENCRYPTION true
+
+// AES 加密 (for Payload distance)
+#define AES_ENCRYPTION false
+
+// ==============================
+
+
 /* TX for Anchor */
-const uint8_t PAN_ID[] = { 0xCA, 0xDE };     // PAN_ID
-const uint8_t ANCHOR_ADDR[] = { 'A', '1' };   // Anchor Address
-const uint8_t TAG_ADDR[] = { 'T', '1' };      // Tag Address
+const uint8_t PAN_ID[] = { 0xCA, 0xDE };
+const uint8_t TAG_ADDR[] = { 'T', '1' };
 
 extern SPISettings _fastSPI;
 
@@ -19,43 +35,47 @@ extern SPISettings _fastSPI;
 #define RESP_MSG_POLL_RX_TS_IDX 10
 #define RESP_MSG_RESP_TX_TS_IDX 14
 #define RESP_MSG_TS_LEN 4
-#define POLL_RX_TO_RESP_TX_DLY_UUS 600
 
-/* Default communication configuration. We use default non-STS DW mode. */
-/* 未加密 */
-static dwt_config_t config = {
-    5,                // Channel number.
-    DWT_PLEN_128,     // Preamble length. Used in TX only.
-    DWT_PAC8,         // Preamble acquisition chunk size. Used in RX only.
-    9,                // TX preamble code. Used in TX only.
-    9,                // RX preamble code. Used in RX only.
-    1,                // 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type
-    DWT_BR_6M8,       // Data rate.
-    DWT_PHRMODE_STD,  // PHY header mode.
-    DWT_PHRRATE_STD,  // PHY header rate.
-    (129 + 8 - 8),    // SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only.
-    DWT_STS_MODE_OFF, // STS disabled
-    DWT_STS_LEN_64,   // STS length see allowed values in Enum dwt_sts_lengths_e
-    DWT_PDOA_M0       // PDOA mode off
-};
+/* STS Encryption */
+#if STS_ENCRYPTION == false
+  static dwt_config_t config = {
+      5,                // Channel number.
+      DWT_PLEN_128,     // Preamble length. Used in TX only.
+      DWT_PAC8,         // Preamble acquisition chunk size. Used in RX only.
+      9,                // TX preamble code. Used in TX only.
+      9,                // RX preamble code. Used in RX only.
+      1,                // 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type
+      DWT_BR_6M8,       // Data rate.
+      DWT_PHRMODE_STD,  // PHY header mode.
+      DWT_PHRRATE_STD,  // PHY header rate.
+      (129 + 8 - 8),    // SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only.
+      DWT_STS_MODE_OFF, // STS disabled
+      DWT_STS_LEN_64,   // STS length see allowed values in Enum dwt_sts_lengths_e
+      DWT_PDOA_M0       // PDOA mode off
+  };
+#else
+  /* 
+  (加密)
+  Configuration option 33. 
+  Channel 5, PRF 64M, Preamble Length 128, PAC 8, Preamble code 9, Data Rate 6.8M, STS Length 128
+  */
+  static dwt_config_t config = {
+      5,                // Channel number. 
+      DWT_PLEN_128,     // Preamble length. 
+      DWT_PAC8,         // Preamble acquisition chunk size. 
+      9,                // TX preamble code. 
+      9,                // RX preamble code. 
+      3,                // SFD type (4z 8 symbol SDF type)
+      DWT_BR_6M8,       // Data rate. 
+      DWT_PHRMODE_STD,  // PHY header mode. 
+      DWT_PHRRATE_STD,  // PHY header rate. 
+      129,// SFD timeout. 
+      DWT_STS_MODE_1,   // MODE_1 Payload + STS 
+      DWT_STS_LEN_128,  // STS lengths
+      DWT_PDOA_M0       // PDOA mode off 
+  };
+#endif
 
-/* 加密 
-static dwt_config_t config = {
-    5,                // Channel number. 
-    DWT_PLEN_128,     // Preamble length. 
-    DWT_PAC8,         // Preamble acquisition chunk size. 
-    9,                // TX preamble code. 
-    9,                // RX preamble code. 
-    3,                // SFD type (4z 8 symbol SDF type)
-    DWT_BR_6M8,       // Data rate. 
-    DWT_PHRMODE_STD,  // PHY header mode. 
-    DWT_PHRRATE_STD,  // PHY header rate. 
-    (128 + 1 + 64 - 8),// SFD timeout. 
-    DWT_STS_MODE_1,   // MODE_1 Payload + STS 
-    DWT_STS_LEN_64,  // STS lengths
-    DWT_PDOA_M0       // PDOA mode off 
-};
-*/
 /* SS-TWR Message Format
  * Poll message from Tag to Anchor:
  * +-----------+--------+----------+-----------+------------+------------+------+--------+
@@ -94,22 +114,37 @@ extern dwt_txconfig_t txconfig_options;
 
 void setup()
 {
-  UART_init();
+  UART_init();//Serial.begin(115200); // UART_init();
 
-  /* STS 時間戳加密 
-  // key
-  static dwt_sts_cp_key_t sts_key = {
-    0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468
-  };
+  /* STS 時間戳加密 */
+  if(STS_ENCRYPTION){
+    // key
+    static dwt_sts_cp_key_t sts_key = {
+        0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468
+    };
 
-  // IV
-  static dwt_sts_cp_iv_t sts_iv = {
-    0x11223344, 0x55667788, 0x9900AABB
-  };
+    // IV
+    static dwt_sts_cp_iv_t sts_iv = {
+        0x11223344, 0x55667788, 0x9900AABB
+    };
+    dwt_configurestskey(&sts_key);
+    dwt_configurestsiv(&sts_iv);
+    dwt_configurestsloadiv();
+  }
+  dwt_configure(&config);
   
-  dwt_configurestskey(&sts_key);
-  dwt_configurestsiv(&sts_iv);
-  dwt_configurestsloadiv();
+  /* AES 資料加密 */
+  /*
+  dwt_aes_config_t aes_config = {
+    .key = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 
+        0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10
+    },
+    .key_index = 1,
+    .mic_size = 8,           // 認證碼長度 (4, 8, 16)
+    .mode = DWT_AES_CCM_128  // 802.15.4 安全模式
+  };
+  dwt_configure_aes(&aes_config);
   */
 
   _fastSPI = SPISettings(16000000L, MSBFIRST, SPI_MODE0);
@@ -172,16 +207,15 @@ void loop()
   if (status_reg & SYS_STATUS_RXFCG_BIT_MASK)
   {
     // STS 檢查
-    /*
     uint32_t status = dwt_read32bitreg(SYS_STATUS_ID);
     if (!(status & SYS_STATUS_CP_LOCK_BIT_MASK)) 
     {
-        Serial.println("STS 驗證失敗！嘗試重置 IV 並丟棄包");
+        // Serial.println("STS 驗證失敗！嘗試重置 IV 並丟棄包");
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
-        dwt_configurestsloadiv(); // 嘗試重新載入 IV 初始值以尋求同步
+        dwt_configurestsloadiv(); // 重載 IV 初始值
         return;
     }
-    */
+    
     uint32_t frame_len;
 
     /* Clear good RX frame event in the DW IC status register. */
