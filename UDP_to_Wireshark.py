@@ -1,28 +1,20 @@
 import serial
-from scapy.all import wrpcap, Ether, Raw # 這裡雖然是 UWB，我們先用 Raw 封裝
-from scapy.layers.dot15d4 import Dot15d4FCS # Wireshark 識別 UWB 常用 802.15.4 解析
+import socket
 
-ser = serial.Serial('COM3', 115200)
-packets = []
+SERIAL_PORT = "COM6"
+BAUDRATE = 115200
 
-print("Listening for UWB packets... Press Ctrl+C to stop.")
+UDP_IP = "255.255.255.255"   # Broadcast
+UDP_PORT = 8001
 
-try:
-    while True:
-        # 讀取長度 (2 bytes)
-        len_data = ser.read(2)
-        frame_len = int.from_bytes(len_data, byteorder='little')
-        
-        # 讀取封包內容
-        payload = ser.read(frame_len)
-        
-        # 轉換為 Scapy 物件 (假設為 802.15.4 格式)
-        pkt = Dot15d4FCS(payload)
-        packets.append(pkt)
-        
-        print(f"Captured packet: {frame_len} bytes")
-        
-except KeyboardInterrupt:
-    if packets:
-        wrpcap("uwb_capture.pcap", packets)
-        print("\nSaved to uwb_capture.pcap")
+ser = serial.Serial(SERIAL_PORT, BAUDRATE)
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+
+print(f"Forwarding {SERIAL_PORT} -> UDP {UDP_IP}:{UDP_PORT}")
+
+while True:
+    line = ser.readline()
+    if line:
+        sock.sendto(line, (UDP_IP, UDP_PORT))
+        print(str(line)[2:-5:])

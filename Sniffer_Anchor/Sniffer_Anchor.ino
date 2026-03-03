@@ -21,35 +21,38 @@ static dwt_config_t config = {
     DWT_PDOA_M0       // PDOA Off
 };
 
-/* STS 密鑰與 IV (必須與通訊雙方一致，否則會 CP_LOCK 失敗) */
+/* STS 加密 */
+
+// KEY
 static dwt_sts_cp_key_t sts_key = {0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468};
+
+// IV
 static dwt_sts_cp_iv_t sts_iv = {0x11223344, 0x55667788, 0x9900AABB};
 
 void setup() {
-    
-    // 1. 初始化 SPI 與 DW3000
     Serial.begin(115200);
     spiBegin(PIN_IRQ, PIN_RST);
     spiSelect(PIN_SS);
     pinMode(PIN_RST, OUTPUT);
     digitalWrite(PIN_RST, LOW); delay(10); digitalWrite(PIN_RST, HIGH); delay(100);
+
     if (dwt_initialise(DWT_DW_IDLE) == DWT_ERROR) {
         Serial.println("DW3000 初始化失敗");
         while (1);
     }
 
-    // 2. 配置 UWB 參數
-    dwt_configure(&config);
-
-    // 3. 【正確寫法】關閉幀過濾，進入混雜模式 (Sniffer 核心)
+    // 混雜模式
     dwt_configureframefilter(DWT_FF_DISABLE, 0); 
 
-    // 4. 配置加密參數 (確保能解開 STS)
+    // 加密參數 (解開 PHR)
     dwt_configurestskey(&sts_key);
     dwt_configurestsiv(&sts_iv);
-    dwt_configurestsloadiv(); // 加載初始計數器
+    dwt_configurestsloadiv(); // IV 初始化
 
-    // 5. 開啟接收
+    // UWB 參數
+    dwt_configure(&config);
+
+    // 接收
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
     Serial.println("UWB Sniffer 已啟動，監聽中...");
 }
@@ -59,10 +62,9 @@ void loop() {
     static uint8_t rx_buffer[1024];
     static int fail_streak = 0;
 
-    // 讀取狀態寄存器
     status = dwt_read32bitreg(SYS_STATUS_ID);
 
-    // A. 成功接收封包
+    // 成功接收封包
     if (status & SYS_STATUS_RXFCG_BIT_MASK) {
         
         if (!(status & SYS_STATUS_CP_LOCK_BIT_MASK)) {
@@ -82,15 +84,15 @@ void loop() {
         if (frame_len <= sizeof(rx_buffer)) {
             dwt_readrxdata(rx_buffer, frame_len, 0);
 
-            // 檢查 STS 狀態 (CP_LOCK)
+            // 檢查 STS 狀態
             bool sts_ok = (status & SYS_STATUS_CP_LOCK_BIT_MASK);
             
-            Serial.print("[Sniffer] 收到封包 | 長度: ");
-            Serial.print(frame_len);
-            Serial.print(sts_ok ? " | STS: OK" : " | STS: FAIL (IV未同步)");
+            // Serial.print("[Sniffer] 收到封包 | 長度: ");
+            // Serial.print(frame_len);
+            // Serial.print(sts_ok ? " | STS: OK" : " | STS: FAIL (IV未同步)");
             
             // 印出 Hex
-            Serial.print(" | DATA: ");
+            // Serial.print(" | DATA: ");
             for (int i = 0; i < frame_len; i++) {
                 Serial.printf("%02X ", rx_buffer[i]);
             }
