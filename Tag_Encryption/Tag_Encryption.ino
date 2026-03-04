@@ -141,14 +141,19 @@ void loop() {
             resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &t4);
 
             double raw = (((t2 - t1) - (t4 - t3) * (1 - ratio)) / 2.0) * DWT_TIME_UNITS * 299792458.0;
-            
+            double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e6;
+            double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e6;
+
             if (raw > 5.0) raw -= STS_OFFSET; // STS mode 偏差 (11m) 
 
             if (raw > 0 && raw < 40.0) {
                 if (first_run) { smooth_dist = raw; first_run = false; }
                 else { smooth_dist = (smooth_dist * 0.8) + (raw * 0.2); }
             }
-            Serial.printf("DIST: %3.2f m (Raw: %3.2f)\n", smooth_dist, raw);
+            Serial.printf(
+                "DATA, %3.2f, %3.2f\n",
+                poll_time_us + resp_time_us, raw
+            );
 
         }
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
@@ -157,5 +162,5 @@ void loop() {
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
     }
     frame_seq_nb++;
-    delay(200);
+    delay(20); //normal 200
 }

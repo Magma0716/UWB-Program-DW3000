@@ -5,4 +5,6 @@ anchor_positions = {
     'A3': (distance_A1_A2 / 2.0, distance_A1_A2),
 }
 
-print(anchor_positions['A1'][0])
+dist = 2000.56
+distStd = dist.std()
+print(distStd)
