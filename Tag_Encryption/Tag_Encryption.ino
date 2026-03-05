@@ -1,6 +1,7 @@
 // RX
 
 #include "dw3000.h"
+#include "dw3000_mac_802_15_4.h"
 
 /* ================================ */
 /* ========== 數據修改區 =========== */
@@ -112,8 +113,9 @@ extern dwt_txconfig_t txconfig_options;
     };
 #endif
 
+
 /* ================================ */
-/* ===== Anchor List Settings ===== */
+/* =========== Message ============ */
 /* ================================ */
 
 /* Messages */
@@ -160,8 +162,7 @@ static uint8_t aes_tx_buffer[32];
 static uint8_t aes_rx_buffer[32];
 
 /* AES jobs */
-static dwt_aes_job_t aes_job_tx;
-static dwt_aes_job_t aes_job_rx;
+static dwt_aes_job_t aes_job_tx, aes_job_rx;
 
 /* mac format */
 mac_frame_802_15_4_format_t     mac_frame= {
@@ -187,7 +188,6 @@ bool isExpectedFrame(uint8_t *buffer) {
 
 void setup() {
     Serial.begin(115200);
-    test_run_info((unsigned char *)APP_NAME);
 
     spiBegin(PIN_IRQ, PIN_RST);
     spiSelect(PIN_SS);
