@@ -2,105 +2,197 @@
 
 #include "dw3000.h"
 
+// ========= 數據修改區 =========
+
+// 延遲時間
+#define POLL_RX_TO_RESP_TX_DLY_UUS 1000 // Treply (未加密:600, 加密:1000)
+
+// Anchor 名稱 (e.g. A1, A2, A3...)
+const uint8_t ANCHOR_ADDR[] = { 'A', '1' };  
+
+// STS 加密 (for PHR ms)
+#define STS_ENCRYPTION false
+
+// AES 加密 (for Payload distance)
+#define AES_ENCRYPTION true
+
+// ==============================
+
 #define PIN_RST 27
 #define PIN_IRQ 34
 #define PIN_SS 4
 #define TX_ANT_DLY 16385
 #define RX_ANT_DLY 16385
-#define POLL_RX_TO_RESP_TX_DLY_UUS 1000 
+#define FRAME_LEN 24
 
-const uint8_t PAN_ID[] = { 0xCA, 0xDE };     
-const uint8_t ANCHOR_ADDR[] = { 'A', '1' };   
+const uint8_t PAN_ID[] = { 0xCA, 0xDE };
 const uint8_t TAG_ADDR[] = { 'T', '1' };      
 
-/*
-(未加密)
-Default communication configuration. We use default non-STS DW mode.
-*/
-/*
-static dwt_config_t config = {
-    5,                // Channel number.
-    DWT_PLEN_128,     // Preamble length. Used in TX only.
-    DWT_PAC8,         // Preamble acquisition chunk size. Used in RX only.
-    9,                // TX preamble code. Used in TX only.
-    9,                // RX preamble code. Used in RX only.
-    1,                // 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type
-    DWT_BR_6M8,       // Data rate.
-    DWT_PHRMODE_STD,  // PHY header mode.
-    DWT_PHRRATE_STD,  // PHY header rate.
-    129,              // SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only.
-    DWT_STS_MODE_OFF, // STS disabled
-    DWT_STS_LEN_64,   // STS length see allowed values in Enum dwt_sts_lengths_e
-    DWT_PDOA_M0       // PDOA mode off
-};
-*/
+/* STS Encryption */
+#if STS_ENCRYPTION == false
+    /*
+    (未加密)
+    Default communication configuration. We use default non-STS DW mode.
+    */
+    static dwt_config_t config = {
+        5,                // Channel number.
+        DWT_PLEN_128,     // Preamble length. Used in TX only.
+        DWT_PAC8,         // Preamble acquisition chunk size. Used in RX only.
+        9,                // TX preamble code. Used in TX only.
+        9,                // RX preamble code. Used in RX only.
+        1,                // 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type
+        DWT_BR_6M8,       // Data rate.
+        DWT_PHRMODE_STD,  // PHY header mode.
+        DWT_PHRRATE_STD,  // PHY header rate.
+        129,              // SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only.
+        DWT_STS_MODE_OFF, // STS disabled
+        DWT_STS_LEN_64,   // STS length see allowed values in Enum dwt_sts_lengths_e
+        DWT_PDOA_M0       // PDOA mode off
+    };
+#else
+    /* 
+    (加密)
+    Configuration option 33. 
+    Channel 5, PRF 64M, Preamble Length 128, PAC 8, Preamble code 9, Data Rate 6.8M, STS Length 128
+    */
+    static dwt_config_t config = {
+        5,                 // Channel number. 
+        DWT_PLEN_128,      // Preamble length. Used in TX only. 
+        DWT_PAC8,          // Preamble acquisition chunk size. Used in RX only. 
+        9,                 // TX preamble code. Used in TX only. 
+        9,                 // RX preamble code. Used in RX only. 
+        3,                 // 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type 
+        DWT_BR_6M8,        // Data rate. 
+        DWT_PHRMODE_STD,   // PHY header mode. 
+        DWT_PHRRATE_STD,   // PHY header rate. 
+        129,               // SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. 
+        DWT_STS_MODE_1,    // Mode 1 STS enabled 
+        DWT_STS_LEN_128,   // (STS length  in blocks of 8) - 1
+        DWT_PDOA_M0        // PDOA mode off 
+    };
+#endif
 
-/* 
-(加密)
-Configuration option 33. 
-Channel 5, PRF 64M, Preamble Length 128, PAC 8, Preamble code 9, Data Rate 6.8M, STS Length 128
-*/
-static dwt_config_t config = {
-    5,                 // Channel number. 
-    DWT_PLEN_128,      // Preamble length. Used in TX only. 
-    DWT_PAC8,          // Preamble acquisition chunk size. Used in RX only. 
-    9,                 // TX preamble code. Used in TX only. 
-    9,                 // RX preamble code. Used in RX only. 
-    3,                 // 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type 
-    DWT_BR_6M8,        // Data rate. 
-    DWT_PHRMODE_STD,   // PHY header mode. 
-    DWT_PHRRATE_STD,   // PHY header rate. 
-    129,               // SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. 
-    DWT_STS_MODE_1,    // Mode 1 STS enabled 
-    DWT_STS_LEN_128,   // (STS length  in blocks of 8) - 1
-    DWT_PDOA_M0        // PDOA mode off 
-};
-
+/* Messages */
 static uint8_t rx_poll_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], ANCHOR_ADDR[0], ANCHOR_ADDR[1], 0xE0, 0, 0};
 static uint8_t tx_resp_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], ANCHOR_ADDR[0], ANCHOR_ADDR[1], TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-static uint8_t rx_buffer[24];
+static uint8_t rx_buffer[FRAME_LEN];
+static uint8_t received_sn;
+
+/* Frame counter */
+static uint32_t frame_seq_nb = 0;
+
+/* AES config */
+static dwt_aes_config_t aes_config;
+
+/* AES buffers */
+static uint8_t aes_tx_buffer[32];
+static uint8_t aes_rx_buffer[32];
+
+/* AES jobs */
+static dwt_aes_job_t aes_job_tx, aes_job_rx;
 
 void setup() {
     Serial.begin(115200);
+
     spiBegin(PIN_IRQ, PIN_RST);
     spiSelect(PIN_SS);
+
     pinMode(PIN_RST, OUTPUT);
-    digitalWrite(PIN_RST, LOW); delay(10); digitalWrite(PIN_RST, HIGH); delay(100);
+    digitalWrite(PIN_RST, LOW); 
+    delay(10); 
+    digitalWrite(PIN_RST, HIGH); 
+    delay(100);
 
-    /* STS加密 */
-
+    /* DW3000 INIT*/
     dwt_initialise(DWT_DW_INIT);
-    static dwt_sts_cp_key_t sts_key = { 0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468 };
-    static dwt_sts_cp_iv_t sts_iv = { 0x11223344, 0x55667788, 0x9900AABB };
-    dwt_configurestskey(&sts_key);
-    dwt_configurestsiv(&sts_iv);
-    dwt_configurestsloadiv();
     dwt_configure(&config);
 
-    /* STS加密 */
+    /* STS */
+    if(STS_ENCRYPTION){
+        static dwt_sts_cp_key_t sts_key = { 0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468 };
+        static dwt_sts_cp_iv_t sts_iv = { 0x11223344, 0x55667788, 0x9900AABB };
+        dwt_configurestskey(&sts_key);
+        dwt_configurestsiv(&sts_iv);
+        dwt_configurestsloadiv();
+    }
 
-    // Apply default antenna delay value.
+    /* AES */
+    if(AES_ENCRYPTION){
+        static dwt_aes_key_t aes_key = { // 128-bit (16 bytes)
+            0x00112233,
+            0x44556677,
+            0x8899AABB,
+            0xCCDDEEFF,
+            0,0,0,0
+        };
+        dwt_set_keyreg_128(&aes_key);
+
+        aes_config = {
+            .aes_key_otp_type = AES_key_RAM,           // 使用 RAM/暫存器金鑰，而非 OTP 燒錄金鑰
+            .aes_core_type    = AES_core_type_CCM,     // 使用 CCM* 核心
+            .mic              = MIC_16,                // 訊息檢查碼長度 8 bytes
+            .key_src          = AES_KEY_Src_Register,  // 金鑰來源：來自暫存器 (剛剛 dwt_set_keyreg_128 設定的)
+            .key_load         = AES_KEY_Load,          // 既然來源是 regs，就不需要從 RAM load
+            .key_addr         = 0,                     // key_src 不是 RAM，此處填 0
+            .key_size         = AES_KEY_128bit,        // 使用 AES-128
+            .mode             = AES_Encrypt            // 加密模式
+        };
+        dwt_configure_aes(&aes_config);
+    }
+    
+    /* antenna delay */
     dwt_setrxantennadelay(RX_ANT_DLY);
     dwt_settxantennadelay(TX_ANT_DLY);
 }
 
 void loop() {
-    /* Activate reception immediately. */
+
+    /* start Rx */
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
 
     uint32_t status;
     while (!((status = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_ERR))) {};
 
     if (status & SYS_STATUS_RXFCG_BIT_MASK) {
-        // 檢查加密鎖定
-        if (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_CP_LOCK_BIT_MASK)) {
+        /* STS lock check */
+        if (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_CP_LOCK_BIT_MASK) && STS_ENCRYPTION) {
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
-            dwt_configurestsloadiv(); // 重整STS
+            dwt_configurestsloadiv(); // 重整 STS 計數器
             return;
         }
 
-        dwt_readrxdata(rx_buffer, 24, 0);
+        // 先讀整個 RX buffer
+        dwt_readrxdata(aes_rx_buffer, FRAME_LEN, 0);
+
+        /* read RX */
+        if(AES_ENCRYPTION){
+
+            uint8_t received_sn = aes_rx_buffer[2];
+
+            // AES-CCM 包含地址與計數器
+            uint8_t nonce[13] = {0};
+            memcpy(nonce, TAG_ADDR, 2);            // Tag addr
+            memcpy(&nonce[9], &frame_seq_nb, 4);   // frame_seq_nb 放最後 4 bytes
+
+            // 解密 poll
+            aes_job_rx.nonce = nonce;
+            aes_job_rx.header = aes_rx_buffer;
+            aes_job_rx.header_len = 10;
+            aes_job_rx.payload = aes_rx_buffer + 10;
+            aes_job_rx.payload_len = FRAME_LEN - 10;
+            aes_job_rx.src_port = AES_Src_Rx_buf_0;
+            aes_job_rx.dst_port = AES_Dst_Scratch;
+            aes_job_rx.mode = AES_Decrypt;
+
+            dwt_do_aes(&aes_job_tx, aes_config.aes_core_type);
+        }
+        else{
+            dwt_readrxdata(rx_buffer, FRAME_LEN, 0);
+        }
+
+        /* check poll */
         rx_buffer[2] = 0;
+
         if (memcmp(rx_buffer, rx_poll_msg, 10) == 0) {
             uint64_t rx_ts = get_rx_timestamp_u64();
             uint32_t tx_time = (rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
@@ -110,12 +202,32 @@ void loop() {
             resp_msg_set_ts(&tx_resp_msg[10], rx_ts);
             resp_msg_set_ts(&tx_resp_msg[14], tx_ts);
 
-            dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0);
+            /* 加密 respone */
+            if(AES_ENCRYPTION){
+                tx_resp_msg[2] = received_sn;
+
+                aes_job_tx.mode = AES_Encrypt;
+                aes_job_tx.src_port = AES_Src_Tx_buf;
+                aes_job_tx.dst_port = AES_Dst_Tx_buf;
+                aes_job_tx.header_len = aes_job_rx.header_len;
+                aes_job_tx.header = aes_job_rx.header;        /* plain-text header which will not be encrypted */
+                aes_job_tx.payload = tx_resp_msg;             /* payload to be sent */
+                aes_job_tx.payload_len = sizeof(tx_resp_msg); /* payload length */
+
+                dwt_do_aes(&aes_job_tx, aes_config.aes_core_type);
+            }
+            else{
+                dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0);
+            }
+
             dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1);
+
             if (dwt_starttx(DWT_START_TX_DELAYED) == DWT_SUCCESS) {
                 while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS_BIT_MASK));
                 dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
             }
+
+            frame_seq_nb++;
         }
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
     } else {

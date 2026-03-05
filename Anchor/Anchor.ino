@@ -4,13 +4,13 @@
 // ========= 數據修改區 =========
 
 // 延遲時間
-#define POLL_RX_TO_RESP_TX_DLY_UUS 1000  // Treply (未加密:600)
+#define POLL_RX_TO_RESP_TX_DLY_UUS 600  // Treply (未加密:600, 加密1000)
 
 // Anchor 名稱 (e.g. A1, A2, A3...)
 const uint8_t ANCHOR_ADDR[] = { 'A', '1' };
 
 // STS 加密 (for PHR ms)
-#define STS_ENCRYPTION true
+#define STS_ENCRYPTION false
 
 // AES 加密 (for Payload distance)
 #define AES_ENCRYPTION false

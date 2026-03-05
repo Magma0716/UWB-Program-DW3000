@@ -3,17 +3,17 @@
 // ========= 數據修改區 =========
 
 // 延遲時間
-#define POLL_TX_TO_RESP_RX_DLY_UUS 500  // Tround (未加密:240)
-#define RESP_RX_TIMEOUT_UUS 1500         // T4 (未加密:400)
+#define POLL_TX_TO_RESP_RX_DLY_UUS 240  // Tround (未加密:240, 加密:500)
+#define RESP_RX_TIMEOUT_UUS 400         // T4 (未加密:400, 加密:1500)
 
 // Tag 強迫休息時間
-#define RNG_DELAY_MS 300  // <-- 改小能讓輸出變快
+#define RNG_DELAY_MS 10  // <-- 改小能讓輸出變快
 
 // Anchor 數量
 #define NUM_ANCHORS 1
 
 // STS 加密 (for PHR ms)
-#define STS_ENCRYPTION true
+#define STS_ENCRYPTION false
 
 // AES 加密 (for Payload distance)
 #define AES_ENCRYPTION false

@@ -26,6 +26,15 @@ time.sleep(2)
 
 print('start receive date...')
 
+# STS 防止區
+try:
+    while True:
+        line = ser.readline().decode('utf-8').strip()
+        arr = line.split(',')
+        print(arr)
+except KeyboardInterrupt:
+    print("\n按下 ctrl + C 開始讀取")
+    
 count = 1
 packageLoss = 0
 while len(data) < DATA_LIMIT:

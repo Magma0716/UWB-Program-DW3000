@@ -1,10 +1,11 @@
-distance_A1_A2 = 2.0
-anchor_positions = {
-    'A1': (0.0, 0.0),
-    'A2': (distance_A1_A2, 0.0),
-    'A3': (distance_A1_A2 / 2.0, distance_A1_A2),
-}
+import sys
+import time
 
-dist = 2000.56
-distStd = dist.std()
-print(distStd)
+try:
+    while True:
+        print("Loop is running... Press Ctrl+C to stop.")
+        time.sleep(2) # Simulates a long-running task
+except KeyboardInterrupt:
+    print("\nProgram terminated by user (Ctrl+C).")
+    
+print(1)
