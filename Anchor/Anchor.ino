@@ -114,7 +114,7 @@ extern dwt_txconfig_t txconfig_options;
 
 void setup()
 {
-  UART_init();//Serial.begin(115200); // UART_init();
+  UART_init();//Serial.begin(115200);
 
   /* STS 時間戳加密 */
   if(STS_ENCRYPTION){
@@ -207,6 +207,7 @@ void loop()
   if (status_reg & SYS_STATUS_RXFCG_BIT_MASK)
   {
     // STS 檢查
+    /*
     uint32_t status = dwt_read32bitreg(SYS_STATUS_ID);
     if (!(status & SYS_STATUS_CP_LOCK_BIT_MASK)) 
     {
@@ -215,7 +216,7 @@ void loop()
         dwt_configurestsloadiv(); // 重載 IV 初始值
         return;
     }
-    
+    */
     uint32_t frame_len;
 
     /* Clear good RX frame event in the DW IC status register. */

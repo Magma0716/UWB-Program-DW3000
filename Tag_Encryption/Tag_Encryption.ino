@@ -2,7 +2,9 @@
 
 #include "dw3000.h"
 
-// ========= 數據修改區 =========
+/* ================================ */
+/* ========== 數據修改區 =========== */
+/* ================================ */
 
 // 延遲時間
 #define POLL_TX_TO_RESP_RX_DLY_UUS 500  // Tround (未加密:240, 加密:500)
@@ -20,7 +22,10 @@
 // AES 加密 (for Payload distance)
 #define AES_ENCRYPTION true
 
-// ==============================
+
+/* ================================ */
+/* ===== DW3000 Basic Config ====== */
+/* ================================ */
 
 #define PIN_RST 27
 #define PIN_IRQ 34
@@ -36,8 +41,12 @@
 
 const uint8_t PAN_ID[] = { 0xCA, 0xDE };     
 const uint8_t TAG_ADDR[] = { 'T', '1' };      
+extern dwt_txconfig_t txconfig_options;
 
-/* Anchor List Settings */
+/* ================================ */
+/* ===== Anchor List Settings ===== */
+/* ================================ */
+
 #if NUM_ANCHORS == 1
     static const char ANCHOR_LIST[NUM_ANCHORS][2] = {
         {'A', '1'},  // Anchor 1
@@ -55,7 +64,11 @@ const uint8_t TAG_ADDR[] = { 'T', '1' };
     };
 #endif
 
-/* STS Encryption */
+
+/* ================================ */
+/* ======== STS Encryption ======== */
+/* ================================ */
+
 #if STS_ENCRYPTION == false
     /*
     (未加密)
@@ -99,16 +112,48 @@ const uint8_t TAG_ADDR[] = { 'T', '1' };
     };
 #endif
 
+/* ================================ */
+/* ===== Anchor List Settings ===== */
+/* ================================ */
+
 /* Messages */
 static uint8_t tx_poll_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 'A', '1', 0xE0, 0, 0};
 static uint8_t rx_resp_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 'A', '1', TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static uint8_t rx_buffer[FRAME_LEN];
 
-/* AES Configuration */
-static dwt_aes_config_t aes_config;
+/* Initiator data */
+#define DEST_ADDR       0x1122334455667788 /* this is the address of the responder */
+#define SRC_ADDR        0x8877665544332211 /* this is the address of the initiator */
+#define DEST_PAN_ID     0x4321             /* this is the PAN ID used in this example */
+
 
 /* Frame counter */
 static uint32_t frame_seq_nb = 0;
+
+
+/* ================================ */
+/* ========= AES Settings ========= */
+/* ================================ */
+
+/* AES Configuration */
+static dwt_aes_config_t aes_config = {
+  AES_key_RAM,
+  AES_core_type_CCM,
+  MIC_0,
+  AES_KEY_Src_Register,
+  AES_KEY_Load,
+  0,
+  AES_KEY_128bit,
+  AES_Encrypt
+};
+
+/* AES KEY */
+static dwt_aes_key_t    keys_options[NUM_OF_KEY_OPTIONS]=
+{
+    {0x00010203, 0x04050607, 0x08090A0B, 0x0C0D0E0F, 0x00000000, 0x00000000, 0x00000000, 0x00000000},
+    {0x11223344, 0x55667788, 0x99AABBCC, 0xDDEEFF00, 0x00000000, 0x00000000, 0x00000000, 0x00000000},
+    {0xFFEEDDCC, 0xBBAA9988, 0x77665544, 0x33221100, 0x00000000, 0x00000000, 0x00000000, 0x00000000}
+};
 
 /* AES buffers */
 static uint8_t aes_tx_buffer[32];
@@ -117,6 +162,20 @@ static uint8_t aes_rx_buffer[32];
 /* AES jobs */
 static dwt_aes_job_t aes_job_tx;
 static dwt_aes_job_t aes_job_rx;
+
+/* mac format */
+mac_frame_802_15_4_format_t     mac_frame= {
+  {
+    {0x09, 0xEC},
+    0x00,
+    {0x21, 0x43},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    { 0x0F, {0x00, 0x00, 0x00, 0x00}, 0x00 }
+  },
+  0x00
+};
+
 
 bool isExpectedFrame(uint8_t *buffer) {
     uint8_t saved_sn = buffer[2];
@@ -128,6 +187,7 @@ bool isExpectedFrame(uint8_t *buffer) {
 
 void setup() {
     Serial.begin(115200);
+    test_run_info((unsigned char *)APP_NAME);
 
     spiBegin(PIN_IRQ, PIN_RST);
     spiSelect(PIN_SS);
@@ -145,7 +205,7 @@ void setup() {
     /* STS */
     if(STS_ENCRYPTION){
         static dwt_sts_cp_key_t sts_key = { 0x12345678, 0x9ABCDEF0, 0x24681357, 0x13572468 };
-        static dwt_sts_cp_iv_t sts_iv = { 0x11223344, 0x55667788, 0x9900AABB };
+        static dwt_sts_cp_iv_t sts_iv =   { 0x11223344, 0x55667788, 0x9900AABB };
         dwt_configurestskey(&sts_key);
         dwt_configurestsiv(&sts_iv);
         dwt_configurestsloadiv();
@@ -153,26 +213,27 @@ void setup() {
 
     /* AES */
     if(AES_ENCRYPTION){
-        static dwt_aes_key_t aes_key = { // 128-bit (16 bytes)
-            0x00112233,
-            0x44556677,
-            0x8899AABB,
-            0xCCDDEEFF,
-            0,0,0,0
-        };
-        dwt_set_keyreg_128(&aes_key);
+        /* Configure the TX spectrum parameters (power, PG delay and PG count) */
+        dwt_configuretxrf(&txconfig_options);
 
-        aes_config = {
-            .aes_key_otp_type = AES_key_RAM,           // 使用 RAM/暫存器金鑰，而非 OTP 燒錄金鑰
-            .aes_core_type    = AES_core_type_CCM,     // 使用 CCM* 核心
-            .mic              = MIC_16,                // 訊息檢查碼長度 8 bytes
-            .key_src          = AES_KEY_Src_Register,  // 金鑰來源：來自暫存器 (剛剛 dwt_set_keyreg_128 設定的)
-            .key_load         = AES_KEY_Load,          // 既然來源是 regs，就不需要從 RAM load
-            .key_addr         = 0,                     // key_src 不是 RAM，此處填 0
-            .key_size         = AES_KEY_128bit,        // 使用 AES-128
-            .mode             = AES_Encrypt            // 加密模式
-        };
-        dwt_configure_aes(&aes_config);
+        /* Next can enable TX/RX states output on GPIOs 5 and 6 to help debug */
+        dwt_setlnapamode(DWT_LNA_ENABLE | DWT_PA_ENABLE);
+
+        aes_job_tx.mode        = AES_Encrypt;         /* this is encryption job */
+        aes_job_tx.src_port    = AES_Src_Tx_buf;      /* dwt_do_aes will take plain text to the TX buffer */
+        aes_job_tx.dst_port    = AES_Dst_Tx_buf;      /* dwt_do_aes will replace the original plain text TX buffer with encrypted one */
+        aes_job_tx.nonce       = nonce;               /* pointer to the nonce structure*/
+        aes_job_tx.header      = (uint8_t *)MHR_802_15_4_PTR(&mac_frame); /* plain-text header which will not be encrypted */
+        aes_job_tx.header_len  = MAC_FRAME_HEADER_SIZE(&mac_frame);
+        aes_job_tx.payload     = tx_poll_msg;         /* payload to be encrypted */
+        aes_job_tx.payload_len = sizeof(tx_poll_msg); /* size of payload to be encrypted */
+
+        aes_job_rx.mode        = AES_Decrypt;      /* this is decryption job */
+        aes_job_rx.src_port    = AES_Src_Rx_buf_0; /* The source of the data to be decrypted is the IC RX buffer */
+        aes_job_rx.dst_port    = AES_Dst_Rx_buf_0; /* Decrypt the encrypted data to the IC RX buffer : this will destroy original RX frame */
+        aes_job_rx.header_len  = aes_job_tx.header_len;
+        aes_job_rx.header      = aes_job_tx.header;/* plain-text header which will not be encrypted */
+        aes_job_rx.payload     = rx_buffer;        /* pointer to where the decrypted data will be copied to when read from the IC*/
     }
 
     /* Antenna delay */
@@ -193,20 +254,6 @@ void loop() {
     /* 發送 Poll */
     tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
     dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
-
-    /*
-    typedef struct {
-        uint8_t             *nonce;      //!< Pointer to the nonce
-        uint8_t             *header;     //!< Pointer to header (this is not encrypted/decrypted)
-        uint8_t             *payload;    //!< Pointer to payload (this is encrypted/decrypted)
-        uint8_t             header_len;  //!< Header size
-        uint16_t            payload_len; //!< Payload size
-        dwt_aes_src_port_e  src_port;    //!< Source port
-        dwt_aes_dst_port_e  dst_port;    //!< Dest port
-        dwt_aes_mode_e      mode;        //!< Encryption or decryption
-        uint8_t             mic_size;    //!< tag_size;
-    }dwt_aes_job_t;
-    */
 
     /* AES TX */
     if(AES_ENCRYPTION){
@@ -242,7 +289,7 @@ void loop() {
 
     if (status & SYS_STATUS_RXFCG_BIT_MASK) {
         
-        /* AES 解密 */
+        /* 解密 respone */
         if(AES_ENCRYPTION){
             dwt_readrxdata(aes_rx_buffer, FRAME_LEN, 0);
 

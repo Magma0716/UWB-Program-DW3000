@@ -23,7 +23,7 @@
 #define tmp_password "bbb520111"
 
 // position setting
-#define UDP_BROADCAST_INTERVAL 15  // Minimum interval between UDP broadcasts (ms)
+#define UDP_BROADCAST_INTERVAL 100  // Minimum interval between UDP broadcasts (ms)
 #define ANCHOR_DATA_TIMEOUT 5000   // Timeout for anchor data in milliseconds
 
 // ==============================
@@ -37,12 +37,12 @@ const uint8_t TAG_ADDR[] = { 'T', '1' };
 /* Anchor List Settings */
 #if NUM_ANCHORS == 1
     static const char ANCHOR_LIST[NUM_ANCHORS][2] = {
-        {'A', '1'},  // Anchor 1
+        {'A', '1'}  // Anchor 1
     };
 #elif NUM_ANCHORS == 2
     static const char ANCHOR_LIST[NUM_ANCHORS][2] = {
         {'A', '1'},  // Anchor 1
-        {'A', '2'},  // Anchor 2
+        {'A', '2'}  // Anchor 2
     };
 #elif NUM_ANCHORS == 3
     static const char ANCHOR_LIST[NUM_ANCHORS][2] = {
