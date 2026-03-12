@@ -10,8 +10,8 @@
 // 延遲時間
 #define POLL_TX_TO_RESP_RX_DLY_UUS 1720  // Tround (未加密:240, STS加密:500, AES加密:1720)
 #define RESP_RX_TIMEOUT_UUS 250        // T4 (未加密:400, STS加密:1500, AES加密:250)
-#define RESP_MSG_POLL_RX_TS_IDX 10      // (未加密:10, AES加密:0)
-#define RESP_MSG_RESP_TX_TS_IDX 14      // (未加密:14, AES加密:4)
+#define RESP_MSG_POLL_RX_TS_IDX 0      // (未加密:10, AES加密:0)
+#define RESP_MSG_RESP_TX_TS_IDX 4      // (未加密:14, AES加密:4)
 
 // Tag 強迫休息時間
 #define RNG_DELAY_MS 1  // <-- 改小能讓輸出變快
@@ -20,34 +20,13 @@
 #define NUM_ANCHORS 1
 
 // STS 加密 (for PHR ms)
-#define STS_ENCRYPTION true  // false, true
+#define STS_ENCRYPTION false  // false, true
 
 // AES 加密 (for Payload distance)
-#define AES_ENCRYPTION false  // false, true
+#define AES_ENCRYPTION true  // false, true
 
 // Padding
-// 12 padding 0 
-// 13 padding 1
-// 14 padding 2
-// 16 padding 4
-// 20 padding 8
-// 28 padding 16
-// 44 padding 32
-// 76 padding 64 X
-// 112 padding 100 X
-// 124 padding 112
-#define PollPadding 12
-// 20 padding 0 
-// 21 padding 1
-// 22 padding 2
-// 24 padding 4
-// 28 padding 8
-// 36 padding 16
-// 52 padding 32
-// 84 padding 64 X
-// 120 padding 100 X
-// 132 padding 112
-#define RespPadding 20
+#define Padding 47
 
 /* ================================ */
 /* ===== DW3000 Basic Config ====== */
@@ -245,8 +224,8 @@ uint32_t          status_reg;
 /* ================================ */
 
 /* Messages */
-static uint8_t tx_poll_msg[PollPadding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 'A', '1', 0xE0, 0, 0};
-static uint8_t rx_resp_msg[RespPadding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 'A', '1', TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static uint8_t tx_poll_msg[12 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 'A', '1', 0xE0, 0, 0};
+static uint8_t rx_resp_msg[20 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 'A', '1', TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static uint8_t rx_buffer[RX_BUF_LEN];
 
 /* Initiator data */
@@ -390,7 +369,7 @@ void loop() {
         dwt_writetxfctrl(aes_job_tx.header_len + aes_job_tx.payload_len + aes_job_tx.mic_size + FCS_LEN, 0, 1); /* Zero offset in TX buffer, ranging. */
 
         /* slow */
-        //crypto_load(PollPadding - 12);
+        //crypto_load(Padding);
 
         /* Start transmission, indicating that a response is expected so that reception is enabled automatically after the frame is sent and the delay
          * set by dwt_setrxaftertxdelay() has elapsed. */

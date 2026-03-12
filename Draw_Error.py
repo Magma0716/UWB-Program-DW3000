@@ -3,6 +3,8 @@ import serial
 import matplotlib.pyplot as plt
 import time
 from datetime import datetime
+import json
+import os
 
 '''
 seq: rounded delay
@@ -15,8 +17,27 @@ pad_inferred_from_data: padding
 PORT = 'COM10'
 BAUD_RATE = 115200
 DATA_LIMIT = 4000 # 資料筆數
-padding = '0'
-encryption = 'STS_' #  non-, STS_, AES_, AES+STS_
+padding = '47'
+encryption = 'AES_' #  non-, STS_, AES_, AES+STS_
+
+# Json
+JSON_FILE = 'results.json'
+if os.path.exists(JSON_FILE):
+    with open(JSON_FILE, 'r', encoding='utf-8') as f:
+        try:
+            stats_data = json.load(f)
+        except:
+            stats_data = {"ms_raw": {}, "dis_raw": {}}
+else:
+    stats_data = {"ms_raw": {}, "dis_raw": {}}
+
+pad_key = str(padding)
+if pad_key not in stats_data["ms_raw"]:
+    stats_data["ms_raw"][pad_key] = []
+if pad_key not in stats_data["dis_raw"]:
+    stats_data["dis_raw"][pad_key] = []
+
+
 
 data = []
 
@@ -74,6 +95,13 @@ for set_idx in range(1,11):
     intv = df['ms']
     intvAvg = intv.mean()
     intvStd = intv.std()
+
+    stats_data["ms_raw"][pad_key].append(round(float(intvStd), 4))
+    stats_data["dis_raw"][pad_key].append(round(float(distStd), 4))
+    
+    with open(JSON_FILE, 'w', encoding='utf-8') as f:
+        json.dump(stats_data, f, indent=4)
+    print(f"Set {set_idx} Stats saved to {JSON_FILE}")
 
     # draw plot
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))

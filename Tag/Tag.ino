@@ -10,7 +10,7 @@
 #define RNG_DELAY_MS 10  // <-- 改小能讓輸出變快
 
 // Anchor 數量
-#define NUM_ANCHORS 1
+#define NUM_ANCHORS 4
 
 // STS 加密 (for PHR ms)
 #define STS_ENCRYPTION false
@@ -49,6 +49,13 @@ const uint8_t TAG_ADDR[] = { 'T', '1' };
         {'A', '1'},  // Anchor 1
         {'A', '2'},  // Anchor 2
         {'A', '3'}   // Anchor 3
+    };
+#elif NUM_ANCHORS == 4
+    static const char ANCHOR_LIST[NUM_ANCHORS][2] = {
+        {'A', '1'},  // Anchor 1
+        {'A', '2'},  // Anchor 2
+        {'A', '3'},  // Anchor 3
+        {'A', '4'}  // Anchor 3
     };
 #endif
 
