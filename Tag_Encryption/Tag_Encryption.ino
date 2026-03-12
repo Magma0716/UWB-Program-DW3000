@@ -10,21 +10,44 @@
 // 延遲時間
 #define POLL_TX_TO_RESP_RX_DLY_UUS 1720  // Tround (未加密:240, STS加密:500, AES加密:1720)
 #define RESP_RX_TIMEOUT_UUS 250        // T4 (未加密:400, STS加密:1500, AES加密:250)
-#define RESP_MSG_POLL_RX_TS_IDX 0      // (未加密:10, AES加密:0)
-#define RESP_MSG_RESP_TX_TS_IDX 4      // (未加密:14, AES加密:4)
+#define RESP_MSG_POLL_RX_TS_IDX 10      // (未加密:10, AES加密:0)
+#define RESP_MSG_RESP_TX_TS_IDX 14      // (未加密:14, AES加密:4)
 
 // Tag 強迫休息時間
-#define RNG_DELAY_MS 100  // <-- 改小能讓輸出變快
+#define RNG_DELAY_MS 1  // <-- 改小能讓輸出變快
 
 // Anchor 數量
 #define NUM_ANCHORS 1
 
 // STS 加密 (for PHR ms)
-#define STS_ENCRYPTION false  // false, true
+#define STS_ENCRYPTION true  // false, true
 
 // AES 加密 (for Payload distance)
-#define AES_ENCRYPTION true  // false, true
+#define AES_ENCRYPTION false  // false, true
 
+// Padding
+// 12 padding 0 
+// 13 padding 1
+// 14 padding 2
+// 16 padding 4
+// 20 padding 8
+// 28 padding 16
+// 44 padding 32
+// 76 padding 64 X
+// 112 padding 100 X
+// 124 padding 112
+#define PollPadding 12
+// 20 padding 0 
+// 21 padding 1
+// 22 padding 2
+// 24 padding 4
+// 28 padding 8
+// 36 padding 16
+// 52 padding 32
+// 84 padding 64 X
+// 120 padding 100 X
+// 132 padding 112
+#define RespPadding 20
 
 /* ================================ */
 /* ===== DW3000 Basic Config ====== */
@@ -67,6 +90,13 @@ static double distance;
         {'A', '1'},  // Anchor 1
         {'A', '2'},  // Anchor 2
         {'A', '3'}   // Anchor 3
+    };
+#elif NUM_ANCHORS == 4
+    static const char ANCHOR_LIST[NUM_ANCHORS][2] = {
+        {'A', '1'},  // Anchor 1
+        {'A', '2'},  // Anchor 2
+        {'A', '3'},  // Anchor 3
+        {'A', '4'}   // Anchor 4
     };
 #endif
 
@@ -215,8 +245,8 @@ uint32_t          status_reg;
 /* ================================ */
 
 /* Messages */
-static uint8_t tx_poll_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 'A', '1', 0xE0, 0, 0};
-static uint8_t rx_resp_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 'A', '1', TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static uint8_t tx_poll_msg[PollPadding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 'A', '1', 0xE0, 0, 0};
+static uint8_t rx_resp_msg[RespPadding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 'A', '1', TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static uint8_t rx_buffer[RX_BUF_LEN];
 
 /* Initiator data */
@@ -234,6 +264,11 @@ bool isExpectedFrame(uint8_t *buffer) {
     bool match = (memcmp(buffer, rx_resp_msg, 10) == 0);
     buffer[2] = saved_sn;
     return match;
+}
+
+void crypto_load(int padding) {
+    volatile uint32_t count = padding * 5000; // 人為製造 CPU 負載
+    while(count--) { __asm__("nop"); }
 }
 
 
@@ -354,9 +389,13 @@ void loop() {
         /* configure the frame control and start transmission */
         dwt_writetxfctrl(aes_job_tx.header_len + aes_job_tx.payload_len + aes_job_tx.mic_size + FCS_LEN, 0, 1); /* Zero offset in TX buffer, ranging. */
 
+        /* slow */
+        //crypto_load(PollPadding - 12);
+
         /* Start transmission, indicating that a response is expected so that reception is enabled automatically after the frame is sent and the delay
          * set by dwt_setrxaftertxdelay() has elapsed. */
         dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+        //dwt_starttx(DWT_START_TX_DELAYED);
 
         /* We assume that the transmission is achieved correctly, poll for reception of a frame or error/timeout. See NOTE 8 below. */
         while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)))
@@ -374,6 +413,7 @@ void loop() {
         dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0);
         dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1);
         dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+        //dwt_starttx(DWT_START_TX_DELAYED);
     }
 
     while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {};
@@ -428,27 +468,34 @@ void loop() {
                 int32_t rtd_init, rtd_resp;
                 float clockOffsetRatio ;
 
+                // 計算 tof 距離
+                uint32_t t1, t2, t3, t4;
+
                 /* Retrieve poll transmission and response reception timestamps. See NOTE 9 below. */
-                poll_tx_ts = dwt_readtxtimestamplo32();
-                resp_rx_ts = dwt_readrxtimestamplo32();
+                t1 = dwt_readtxtimestamplo32();
+                t2 = dwt_readrxtimestamplo32();
 
                 /* Read carrier integrator value and calculate clock offset ratio. See NOTE 11 below. */
                 clockOffsetRatio = ((float)dwt_readclockoffset()) / (uint32_t)(1<<26);
 
                 /* Get timestamps embedded in response message. */
-                resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &poll_rx_ts);
-                resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &resp_tx_ts);
+                resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &t3);
+                resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &t4);
 
                 /* Compute time of flight and distance, using clock offset ratio to correct for differing local and remote clock rates */
-                rtd_init = resp_rx_ts - poll_tx_ts;
-                rtd_resp = resp_tx_ts - poll_rx_ts;
+                // rtd_init = resp_rx_ts - poll_tx_ts;
+                // rtd_resp = resp_tx_ts - poll_rx_ts;
 
-                tof = ((rtd_init - rtd_resp * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
+                tof = (((t2 - t1) - (t4 - t3) * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
                 distance = tof * SPEED_OF_LIGHT;
+                double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
+                double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
 
-                /* Display computed distance on LCD. */
-                snprintf(dist_str, sizeof(dist_str), "DIST: %3.2f m", distance);
-                test_run_info((unsigned char *)dist_str);
+                Serial.printf(
+                    "DATA, %3.2f, %3.2f\n",
+                    poll_time_us + resp_time_us, distance
+                );
+                // test_run_info((unsigned char *)dist_str);
             }
         }
         else{
@@ -468,8 +515,8 @@ void loop() {
                 resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &t4);
 
                 double raw = (((t2 - t1) - (t4 - t3) * (1 - ratio)) / 2.0) * DWT_TIME_UNITS * 299792458.0;
-                double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e6;
-                double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e6;
+                double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
+                double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
 
                 if (raw > 5.0 && STS_ENCRYPTION) raw -= STS_OFFSET; // STS mode 偏差 (11m) 
 

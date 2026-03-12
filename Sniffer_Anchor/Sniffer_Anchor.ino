@@ -8,7 +8,7 @@
 (未加密)
 Default communication configuration. We use default non-STS DW mode.
 */
-/*
+
 static dwt_config_t config = {
     5,                // Channel number.
     DWT_PLEN_128,     // Preamble length. Used in TX only.
@@ -24,8 +24,8 @@ static dwt_config_t config = {
     DWT_STS_LEN_64,   // STS length see allowed values in Enum dwt_sts_lengths_e
     DWT_PDOA_M0       // PDOA mode off
 };
-*/
 
+/*
 // 加密
 static dwt_config_t config = {
     5,                // Channel
@@ -42,7 +42,7 @@ static dwt_config_t config = {
     DWT_STS_LEN_128,  // STS Length
     DWT_PDOA_M0       // PDOA Off
 };
-
+*/
 /* STS 加密 */
 
 // KEY

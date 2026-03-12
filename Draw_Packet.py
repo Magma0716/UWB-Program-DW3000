@@ -184,6 +184,26 @@ def get_packet_structure(b):
             ]
             return "Poll", struct
         
+        # Poll AES
+        elif b[0] == 0x09 and b[1] == 0xEC:
+            struct += [
+                ("FCF",               2, "#BEFBFF"),
+                ("Seq\nNum",          1, "#BEFBFF"),
+                ("Pan\nID",           2, "#BEFBFF"),
+                ("Dst_Adr",           8, "#BEFBFF"),
+                ("Src_Adr",           8, "#BEFBFF"),
+                
+                ("Security\nControl", 1, "#FFD270"),
+                ("Frame\nCounter",    4, "#FFD270"),
+                ("Key\nIndex",        1, "#FFD270"),
+                
+                ("Payload",           12, "#FEFDE8"),
+                
+                ("MIC",               16, "#ECFEE8"),
+                ("CRC",               2, "#FEE8E8")
+            ]
+            return "Poll_AES", struct
+        
         # Respone
         elif b[9] == 0xE1:
             struct += [
@@ -268,4 +288,7 @@ DW1000
 
 DW3000
 41 88 A3 CA DE 54 31 41 31 E0 4B F9
+
+poll AES
+09 EC D0 21 43 88 77 66 55 44 33 22 11 11 22 33 44 55 66 77 88 0F D0 09 00 00 01 5D 9B 52 30 1B FE A2 A2 E3 55 83 F5 EF 60 AD B8 91 C3 2C FF A8 FB 2E E6 83 7F 33 CE 9D 8E
 '''
