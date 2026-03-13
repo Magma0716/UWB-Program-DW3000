@@ -83,7 +83,7 @@ def on_pick(event):
     update_plot()
 
 # 樣式設定
-ax1.set_ylabel('ms(σ)')
+ax1.set_ylabel('ns(σ)')
 ax1.set_xticks(padding_list)
 ax2.set_ylabel('Distance(σ)')
 ax2.set_xlabel('Padding Size')

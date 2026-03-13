@@ -14,7 +14,7 @@
 #define RESP_MSG_RESP_TX_TS_IDX 4      // (未加密:14, AES加密:4)
 
 // Tag 強迫休息時間
-#define RNG_DELAY_MS 1  // <-- 改小能讓輸出變快
+#define RNG_DELAY_MS 0  // <-- 改小能讓輸出變快
 
 // Anchor 數量
 #define NUM_ANCHORS 1
@@ -246,7 +246,12 @@ bool isExpectedFrame(uint8_t *buffer) {
 }
 
 void crypto_load(int padding) {
-    volatile uint32_t count = padding * 5000; // 人為製造 CPU 負載
+    if (padding <= 0) return;
+    
+    int base_delay = padding * 50000; // 基礎延遲隨 Padding 線性增加
+    int jitter = random(0, padding * 500); // 隨機抖動也隨 Padding 增加
+    
+    volatile uint32_t count = base_delay + jitter;
     while(count--) { __asm__("nop"); }
 }
 

@@ -208,6 +208,8 @@ class UWBPositionSystem:
                 raw_x, raw_y = None, None
                 num = len(dists)
 
+                print(json_data)
+                
                 # raw tag
                 if num >= 1 and 'A1' in dists:
                     self.circles['A1'].set_radius(dists['A1'])

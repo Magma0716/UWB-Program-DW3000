@@ -21,7 +21,7 @@ padding = '47'
 encryption = 'AES_' #  non-, STS_, AES_, AES+STS_
 
 # Json
-JSON_FILE = 'results.json'
+JSON_FILE = 'AES_Crypto_Results.json'
 if os.path.exists(JSON_FILE):
     with open(JSON_FILE, 'r', encoding='utf-8') as f:
         try:
