@@ -102,28 +102,8 @@ extern SPISettings _fastSPI;
  * - RES: Reserved bytes
  */
 
-// 12 padding 0 
-// 13 padding 1
-// 14 padding 2
-// 16 padding 4
-// 20 padding 8
-// 28 padding 16
-// 44 padding 32
-// 76 padding 64
-// 112 padding 100
-// 124 padding 112
-static uint8_t rx_poll_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], ANCHOR_ADDR[0], ANCHOR_ADDR[1], 0xE0, 0, 0};
 
-// 20 padding 0 
-// 21 padding 1
-// 22 padding 2
-// 24 padding 4
-// 28 padding 8
-// 36 padding 16
-// 52 padding 32
-// 84 padding 64
-// 120 padding 100
-// 132 padding 112
+static uint8_t rx_poll_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], ANCHOR_ADDR[0], ANCHOR_ADDR[1], 0xE0, 0, 0};
 static uint8_t tx_resp_msg[] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], ANCHOR_ADDR[0], ANCHOR_ADDR[1], TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 static uint8_t frame_seq_nb = 0;
@@ -250,8 +230,8 @@ void loop()
     {
       dwt_readrxdata(rx_buffer, frame_len, 0);
 
-      //if (rx_buffer[9] == 0xE0) {
-        /*
+      //if (rx_buffer[9] == 0xE0 && memcmp(&rx_buffer[3], PAN_ID, 2) == 0) {
+        
         // 提取發送者 (Tag) 的 ID
         uint8_t incoming_tag_id[2];
         incoming_tag_id[0] = rx_buffer[5]; 
@@ -260,12 +240,14 @@ void loop()
         // 將回傳目標設為該 Tag
         tx_resp_msg[7] = incoming_tag_id[0];
         tx_resp_msg[8] = incoming_tag_id[1];
-        */
+        
         /* Check that the frame is a poll sent by "SS TWR initiator" example.
         * As the sequence number field of the frame is not relevant, it is cleared to simplify the validation of the frame. */
         rx_buffer[ALL_MSG_SN_IDX] = 0;
-        if (memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) == 0)
-        //if(rx_buffer[3] == PAN_ID[0] && rx_buffer[4] == PAN_ID[1])
+        //if (memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) == 0) <------
+        if(rx_buffer[9] == 0xE0 &&                                
+           rx_buffer[3] == PAN_ID[0] && rx_buffer[4] == PAN_ID[1] &&
+           rx_buffer[7] == ANCHOR_ADDR[0] && rx_buffer[8] == ANCHOR_ADDR[1])
         {
           uint32_t resp_tx_time;
           int ret;
@@ -304,8 +286,8 @@ void loop()
             /* Increment frame sequence number after transmission of the poll message (modulo 256). */
             frame_seq_nb++;
           }
-        //}
-      }
+        }
+      //}
     }
   }
   else

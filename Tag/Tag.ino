@@ -441,9 +441,14 @@ static bool isExpectedFrame(const uint8_t *frame, const uint32_t len) {
         return false;
 
     // 檢查基本訊息格式 (包含 PAN ID 等)
-    if (memcmp(frame, rx_resp_msg, ALL_MSG_COMMON_LEN) != 0)
-        return false;
-
+    /*if (memcmp(frame, rx_resp_msg, ALL_MSG_COMMON_LEN) != 0)
+        return false;*/
+    if (frame[3] == PAN_ID[0] && frame[4] == PAN_ID[1] && frame[9] == 0xE1) {
+        // 檢查這個回應是不是給我的 (Tag ID 是否相符)
+        if (frame[7] == TAG_ADDR[0] && frame[8] == TAG_ADDR[1]) {
+            return true;
+        }
+    }
     return true;
 }
 
