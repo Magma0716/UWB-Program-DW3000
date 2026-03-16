@@ -9,8 +9,8 @@
 
 // 延遲時間
 #define POLL_RX_TO_RESP_TX_DLY_UUS 2000 // Treply (未加密:600, STS加密:1000, AES加密:2000)
-#define RESP_MSG_POLL_RX_TS_IDX 0     // (未加密:10, AES加密:0)
-#define RESP_MSG_RESP_TX_TS_IDX 4     // (未加密:14, AES加密:4)
+#define RESP_MSG_POLL_RX_TS_IDX 0       // (未加密:10, AES加密:0)
+#define RESP_MSG_RESP_TX_TS_IDX 4       // (未加密:14, AES加密:4)
 
 // Anchor 名稱 (e.g. A1, A2, A3...)
 const uint8_t ANCHOR_ADDR[] = { 'A', '1' };  
@@ -22,7 +22,7 @@ const uint8_t ANCHOR_ADDR[] = { 'A', '1' };
 #define AES_ENCRYPTION true  // false, true
 
 // Padding
-#define Padding 47
+#define Padding 0
 
 /* ================================ */
 /* ===== DW3000 Basic Config ====== */

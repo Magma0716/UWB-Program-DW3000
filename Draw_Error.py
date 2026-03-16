@@ -17,11 +17,11 @@ pad_inferred_from_data: padding
 PORT = 'COM10'
 BAUD_RATE = 115200
 DATA_LIMIT = 4000 # 資料筆數
-padding = '47'
+padding = '0'
 encryption = 'AES_' #  non-, STS_, AES_, AES+STS_
 
 # Json
-JSON_FILE = 'AES_Crypto_Results.json'
+JSON_FILE = 'AES_RandomIV_Results.json'
 if os.path.exists(JSON_FILE):
     with open(JSON_FILE, 'r', encoding='utf-8') as f:
         try:
@@ -57,7 +57,7 @@ if encryption == 'STS_':
     except KeyboardInterrupt:
         print("\n按下 ctrl + C 開始讀取")
 
-for set_idx in range(1,11):
+for set_idx in range(1,20+1):
     data = []    
     count = 1
     packageLoss = 0

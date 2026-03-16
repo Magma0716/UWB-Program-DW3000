@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import json
 
-with open('results.json','r') as file:
+with open('AES_RandomIV_Results.json','r') as file:
     data = json.load(file)
 
 # --- 原始資料 (保持不變) ---

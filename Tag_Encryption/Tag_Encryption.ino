@@ -9,9 +9,9 @@
 
 // 延遲時間
 #define POLL_TX_TO_RESP_RX_DLY_UUS 1720  // Tround (未加密:240, STS加密:500, AES加密:1720)
-#define RESP_RX_TIMEOUT_UUS 250        // T4 (未加密:400, STS加密:1500, AES加密:250)
-#define RESP_MSG_POLL_RX_TS_IDX 0      // (未加密:10, AES加密:0)
-#define RESP_MSG_RESP_TX_TS_IDX 4      // (未加密:14, AES加密:4)
+#define RESP_RX_TIMEOUT_UUS 250          // T4 (未加密:400, STS加密:1500, AES加密:250)
+#define RESP_MSG_POLL_RX_TS_IDX 0        // (未加密:10, AES加密:0)
+#define RESP_MSG_RESP_TX_TS_IDX 4        // (未加密:14, AES加密:4)
 
 // Tag 強迫休息時間
 #define RNG_DELAY_MS 0  // <-- 改小能讓輸出變快
@@ -26,7 +26,7 @@
 #define AES_ENCRYPTION true  // false, true
 
 // Padding
-#define Padding 47
+#define Padding 0
 
 /* ================================ */
 /* ===== DW3000 Basic Config ====== */
@@ -50,6 +50,13 @@ extern dwt_txconfig_t txconfig_options;
 
 static double tof;
 static double distance;
+
+/* IV 查表去重複設定 */
+#define IV_TABLE_SIZE 5005 
+static uint32_t iv_history[IV_TABLE_SIZE];
+static uint16_t iv_count = 0;  // 記錄目前已經存了多少筆
+static uint16_t write_idx = 0; // 記錄下一次要寫入的位置
+
 
 /* ================================ */
 /* ===== Anchor List Settings ===== */
@@ -255,6 +262,47 @@ void crypto_load(int padding) {
     while(count--) { __asm__("nop"); }
 }
 
+// 檢查並插入新的 IV 到歷史記錄
+bool iv_table_insert_if_new(uint32_t new_iv) {
+    // 1. 先檢查歷史紀錄中是否有完全重複的 (避免剛好撞到)
+    // 注意：隨著筆數變多，這裡的檢查會稍微變慢
+    for (int i = 0; i < iv_count; i++) {
+        if (iv_history[i] == new_iv) return false; 
+    }
+
+    // 2. 寫入資料並移動指針
+    iv_history[write_idx] = new_iv;
+    write_idx++;
+
+    // 3. 更新目前總筆數（最高到 IV_TABLE_SIZE）
+    if (iv_count < IV_TABLE_SIZE) {
+        iv_count++;
+    }
+
+    // 4. 關鍵修正：循環邏輯
+    // 當寫入位置到達 5005 時，自動回到 0，這樣就不會觸發 Table Full 報錯
+    if (write_idx >= IV_TABLE_SIZE) {
+        write_idx = 0; 
+    }
+
+    return true; 
+    }
+
+// 生成不重複隨機 IV 並填入 frame_counter
+bool set_unique_random_iv() {
+    for (int tries = 0; tries < 100000; tries++) {
+        uint32_t r = esp_random();
+        if (iv_table_insert_if_new(r)) {
+            // 寫入 MAC 結構
+            mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(r & 0xFF);
+            mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = (uint8_t)((r >> 8) & 0xFF);
+            mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = (uint8_t)((r >> 16) & 0xFF);
+            mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = (uint8_t)((r >> 24) & 0xFF);
+            return true;
+        }
+    }
+    return false;
+}
 
 /* ================================ */
 /* ============ Set Up ============ */
@@ -340,6 +388,13 @@ void loop() {
 
     /* AES setting */
     if(AES_ENCRYPTION){
+
+        // 生成不重複隨機 IV 並填入
+        if(!set_unique_random_iv()) { 
+            Serial.println("Error: IV Table Full!"); 
+            while(1); 
+        }
+
         /* Program the correct key to be used */
         dwt_set_keyreg_128(&keys_options[INITIATOR_KEY_INDEX-1]);
         /* Set the key index for the frame */
