@@ -90,9 +90,9 @@ static int currentAnchorIndex = 0;  // 目前正在測距的 Anchor 索引
 struct AnchorData {
     char id[2];        // Anchor ID (2 chars)
     double distance;   // Measured distance
-    double tof;       // Time of flight
+    double tof;        // Time of flight
     unsigned long timestamp; // Last update timestamp
-    bool active;      // Whether this anchor is active
+    bool active;       // Whether this anchor is active
 };
 
 

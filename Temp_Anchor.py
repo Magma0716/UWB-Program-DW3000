@@ -13,7 +13,7 @@
 #define RESP_MSG_RESP_TX_TS_IDX 4       // (未加密:14, AES加密:4)
 
 // Anchor 名稱 (e.g. A1, A2, A3...)
-const uint8_t ANCHOR_ADDR[] = { 'A', '4' };  
+const uint8_t ANCHOR_ADDR[] = { 'A', '1' };  
 
 // STS 加密 (for PHR ms)
 #define STS_ENCRYPTION false  // false, true
@@ -290,11 +290,10 @@ void loop() {
              * as should be sent by "SS TWR AES initiator" example. */
             if (memcmp(rx_buffer, rx_poll_msg, aes_job_rx.payload_len) == 0)
             {
-                uint32_t        resp_tx_time;
+                uint32_t          resp_tx_time;
                 int             ret;
                 uint8_t         nonce[13];
-                uint8_t current_sn = MAC_FRAME_SEQ_NUM_802_15_4(&mac_frame);
-                
+
                 /* Retrieve poll reception timestamp. */
                 poll_rx_ts = get_rx_timestamp_u64();
 
@@ -317,7 +316,7 @@ void loop() {
                 MAC_FRAME_AUX_KEY_IDENTIFY_802_15_4(&mac_frame)=RESPONDER_KEY_INDEX;
 
                 /* Increment the sequence number */
-                MAC_FRAME_SEQ_NUM_802_15_4(&mac_frame) = current_sn;
+                MAC_FRAME_SEQ_NUM_802_15_4(&mac_frame)++;
 
                 /* Update the frame count */
                 mac_frame_update_aux_frame_cnt(&mac_frame,mac_frame_get_aux_frame_cnt(&mac_frame)+1);

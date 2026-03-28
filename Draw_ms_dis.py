@@ -32,21 +32,33 @@ for p in padding_list:
     ax2.scatter([p]*len(dis_raw[p]), dis_raw[p], color='gray', alpha=0.15, s=50, picker=True, gid=p)
 
 def update_plot():
+    # 當選中點發生變化時，清空終端機螢幕並印出最新列表
+    import os
+    # 根據不同作業系統清空終端機 (Windows 是 cls, Linux/Mac 是 clear)
+    # 如果你不需要清空螢幕，可以註解掉下面這行
+    os.system('cls') 
+
+    print("\n" + "="*50)
+    print(f"{'Padding':<15} | {'ns(σ)':<15} | {'Distance(σ)':<15}")
+    print("-"*50)
+
     if selected_points:
-        # 按 Padding 排序，確保連線從左到右
+        # 按 Padding 排序，確保顯示從左到右
         selected_points.sort()
         
-        # 取得目前所有選中點的座標
         h_x = [p for p, i in selected_points]
         h_y1 = [ms_raw[p][i] for p, i in selected_points]
         h_y2 = [dis_raw[p][i] for p, i in selected_points]
         
-        # 更新亮點
+        # 逐點列印目前選擇的數值
+        for p, y1, y2 in zip(h_x, h_y1, h_y2):
+            print(f"{p:<15} | {y1:<15.4f} | {y2:<15.4f}")
+
+        # 更新亮點圖層
         highlights1.set_data(h_x, h_y1)
         highlights2.set_data(h_x, h_y2)
         
-        # --- 修正後的連線邏輯 ---
-        # 如果同一個 Padding 有多個點，我們取該 Padding 下點選點的平均值來連線
+        # 連線邏輯 (取平均)
         unique_paddings = sorted(list(set(h_x)))
         if len(unique_paddings) > 1:
             line_x = unique_paddings
@@ -59,11 +71,13 @@ def update_plot():
             line1.set_data([], [])
             line2.set_data([], [])
     else:
+        print("尚未選取任何點。")
         highlights1.set_data([], [])
         highlights2.set_data([], [])
         line1.set_data([], [])
         line2.set_data([], [])
 
+    print("="*50)
     ax1.set_title(f"Interactive Tracking | Selected Points: {len(selected_points)}")
     fig.canvas.draw_idle()
 

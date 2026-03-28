@@ -12,8 +12,8 @@ class UWB_EKF_3D:
         self.A = np.eye(6)
         self.A[0, 3] = self.A[1, 4] = self.A[2, 5] = self.dt
         self.P = np.eye(6) * 1.0
-        self.Q = np.eye(6) * 0.005 
-        self.R_val = 0.1 
+        self.Q = np.eye(6) * 0.01
+        self.R_val = 0.5
 
     def predict(self):
         self.X = np.dot(self.A, self.X)
@@ -22,14 +22,30 @@ class UWB_EKF_3D:
     def update(self, distances, anchor_pos):
         for aid, z_meas in distances.items():
             if aid not in anchor_pos: continue
+            
             an_x, an_y, an_z = anchor_pos[aid]
             dx, dy, dz = self.X[0,0]-an_x, self.X[1,0]-an_y, self.X[2,0]-an_z
+
+            # 預測距離
             z_pred = np.sqrt(dx**2 + dy**2 + dz**2)
-            if z_pred < 0.001: z_pred = 0.001
+            if z_pred < 0.01: z_pred = 0.01
+            
             H = np.array([[dx/z_pred, dy/z_pred, dz/z_pred, 0, 0, 0]])
+            
+            # 計算殘差
+            innovation = z_meas - z_pred
+        
             S = np.dot(np.dot(H, self.P), H.T) + self.R_val
-            K = np.dot(np.dot(self.P, H.T), np.linalg.inv(S))
-            self.X += np.dot(K, (z_meas - z_pred))
+            S_val = S[0,0]
+            
+            # 異常值剔除
+            mahalanobis_sq = (innovation**2) / S_val
+            if mahalanobis_sq > 9.0: continue
+            
+            
+            # S = np.dot(np.dot(H, self.P), H.T) + self.R_val
+            K = np.dot(self.P, H.T) / S_val
+            self.X += K * innovation
             self.P = np.dot((np.eye(6) - np.dot(K, H)), self.P)
 
     def get_pos(self):
@@ -62,14 +78,25 @@ class MultiTagSystem:
         self.setup_axes()
 
     def setup_axes(self):
+        # anchor 位置
+        all_x = [p[0] for p in self.anchors.values()]
+        all_y = [p[1] for p in self.anchors.values()]
+        all_z = [p[2] for p in self.anchors.values()]
+        pad = 0.2
+        
         # 2D 設置
         self.ax2d.set_title("2D Position Tracking")
-        self.ax2d.set_xlim([-1, 9]); self.ax2d.set_ylim([-1, 7])
+        #self.ax2d.set_xlim([-1, 9]); self.ax2d.set_ylim([-1, 7])
+        self.ax2d.set_xlim([min(all_x)-pad, max(all_x)+pad])
+        self.ax2d.set_ylim([min(all_y)-pad, max(all_y)+pad])
         self.ax2d.grid(True); self.ax2d.set_aspect('equal')
         
         # 3D 設置
         self.ax3d.set_title("3D Position Tracking")
-        self.ax3d.set_xlim([-1, 9]); self.ax3d.set_ylim([-1, 7]); self.ax3d.set_zlim([0, 4])
+        #self.ax3d.set_xlim([-1, 9]); self.ax3d.set_ylim([-1, 7]); self.ax3d.set_zlim([0, 4])
+        self.ax3d.set_xlim([min(all_x)-pad, max(all_x)+pad])
+        self.ax3d.set_ylim([min(all_y)-pad, max(all_y)+pad])
+        self.ax3d.set_zlim([min(all_z)-pad, max(all_z)+pad])
         
         # 畫出 Anchor (藍色方塊)
         for aid, pos in self.anchors.items():
@@ -130,54 +157,57 @@ class MultiTagSystem:
             return None
     
     def update(self, frame):
-        latest_data = None
+        updated_tags = set()
+        
         while True:
             try:
                 data, _ = self.sock.recvfrom(2048)
-                latest_data = data
-            except: break
-
-        if latest_data:
-            try:
-                msg = json.loads(latest_data.decode())
-                tid = msg.get('tag', 'T1')
+                msg = json.loads(data.decode())
+                tid = msg.get('tag')
+                if tid not in self.ekfs: continue
+                
                 dists = {a['id']: a['distance'] for a in msg['anchors']}
-
-                print(msg)
+                ekf = self.ekfs[tid]
                 
-                # EKF data
-                if tid in self.ekfs:
-                    ekf = self.ekfs[tid]
-                    ekf.predict()
-                    ekf.update(dists, self.anchors)
-                    x, y, z = ekf.get_pos()
-
-                    # 更新軌跡數據
-                    tx, ty, tz = self.trails[tid]
-                    tx.append(x); ty.append(y); tz.append(z)
-                    if len(tx) > 30: tx.pop(0); ty.pop(0); tz.pop(0)
-
-                    # 更新圖形
-                    objs = self.plot_objs[tid]
-                    objs['pt2d'].set_data([x], [y])
-                    objs['ln2d'].set_data(tx, ty)
-                    objs['pt3d'].set_data_3d([x], [y], [z])
-                    objs['ln3d'].set_data_3d(tx, ty, tz)
+                # 預測
+                ekf.predict()
                 
-                # raw data
+                # 原始定位
                 raw_xyz = self.trilateration_3d(dists)
+                
+                # 更新
+                ekf.update(dists, self.anchors)
+                
+                # 記錄軌跡
+                x, y, z = ekf.get_pos()
+                tx, ty, tz = self.trails[tid]
+                tx.append(x); ty.append(y); tz.append(z)
+                if len(tx) > 30: tx.pop(0); ty.pop(0); tz.pop(0)
+                
+                updated_tags.add(tid)
+                
+                # 同步更新 Raw Data 顯示
                 if raw_xyz is not None:
-                    rx, ry, rz = raw_xyz
-                    self.plot_objs[tid]['raw2d'].set_data([rx], [ry])
-                    self.plot_objs[tid]['raw3d'].set_data_3d([rx], [ry], [rz])
-                else:
-                    self.plot_objs[tid]['raw2d'].set_data([], [])
-                    self.plot_objs[tid]['raw3d'].set_data_3d([], [], [])
-                    
-            except Exception as e: 
-                pass
+                    self.plot_objs[tid]['raw2d'].set_data([raw_xyz[0]], [raw_xyz[1]])
+                    self.plot_objs[tid]['raw3d'].set_data_3d([raw_xyz[0]], [raw_xyz[1]], [raw_xyz[2]])
 
-        return [] # FuncAnimation blit=False 不需要回傳
+            except BlockingIOError:
+                break
+            except Exception as e:
+                print(f"Error: {e}")
+                break
+
+        # 5. 統一刷新畫布上受影響的對象
+        for tid in updated_tags:
+            x, y, z = self.ekfs[tid].get_pos()
+            tx, ty, tz = self.trails[tid]
+            objs = self.plot_objs[tid]
+            objs['pt2d'].set_data([x], [y])
+            objs['ln2d'].set_data(tx, ty)
+            objs['pt3d'].set_data_3d([x], [y], [z])
+            objs['ln3d'].set_data_3d(tx, ty, tz)
+
+        return []
 
     def run(self):
         self.ani = FuncAnimation(self.fig, self.update, interval=20, blit=False)

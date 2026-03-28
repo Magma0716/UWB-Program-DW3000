@@ -14,7 +14,7 @@
 #define RESP_MSG_RESP_TX_TS_IDX 4        // (未加密:14, AES加密:4)
 
 // Tag 強迫休息時間
-#define RNG_DELAY_MS 10  // <-- 改小能讓輸出變快
+#define RNG_DELAY_MS 0  // <-- 改小能讓輸出變快
 
 // Anchor 數量
 #define NUM_ANCHORS 4
@@ -86,7 +86,7 @@ struct AnchorData {
 static AnchorData anchorArray[MAX_ANCHORS];
 static int activeAnchors = 0;
 static unsigned long lastBroadcastTime = 0;  // Last UDP broadcast timestamp
-static char jsonBuffer[1024];
+
 
 /* ================================ */
 /* ===== Anchor List Settings ===== */
@@ -501,20 +501,18 @@ void setup() {
         udp.begin(UDP_PORT);
     #endif
 
-    Serial.println("1. =====================");
     spiBegin(PIN_IRQ, PIN_RST);
     spiSelect(PIN_SS);
-    Serial.println("2. =====================");
+
     pinMode(PIN_RST, OUTPUT);
     digitalWrite(PIN_RST, LOW); 
     delay(10); 
     digitalWrite(PIN_RST, HIGH); 
     delay(100);
-    Serial.println("3. =====================");
+
     /* DW3000 INIT */
     dwt_initialise(DWT_DW_INIT);
     dwt_configure(&config);
-    Serial.println("4. =====================");
 
     /* STS */
     if(STS_ENCRYPTION){
@@ -573,23 +571,6 @@ void setup() {
 /* ================================ */
 
 void loop() {
-
-    // 取得目前要測距的 Anchor 名稱 (例如 'A', '1')
-    char targetID0 = ANCHOR_LIST[currentAnchorIndex][0];
-    char targetID1 = ANCHOR_LIST[currentAnchorIndex][1];
-
-    // 更新加密用的 MAC Frame 目的地 (影響 AES Nonce 與 Header)
-    // 這裡我們把目標 ID 填入 DEST_ADDR 的低位元組 (假設高位元組固定)
-    mac_frame.mhr_802_15_4.dest_addr[0] = targetID1; // '1'
-    mac_frame.mhr_802_15_4.dest_addr[1] = targetID0; // 'A'
-
-    // 更新非加密模式用的 tx_poll_msg (如果 AES 沒開時會用到)
-    tx_poll_msg[7] = targetID0;
-    tx_poll_msg[8] = targetID1;
-    
-    // 更新預期接收的 ID (用於後續驗證)
-    rx_resp_msg[5] = targetID0;
-    rx_resp_msg[6] = targetID1;
 
     /* 距離設定 */
     static float smooth_dist = 0;
@@ -743,23 +724,6 @@ void loop() {
                     "DATA, %3.2f, %3.2f\n",
                     poll_time_us + resp_time_us, distance
                 );
-                
-                // 在 Serial.printf 之後加入：
-                char currentName[3] = { targetID0, targetID1, 0 };
-                updateAnchorData(currentName, distance, tof);
-                
-                // 移動到下一個 Anchor 並進行清理
-                cleanupInvalidAnchors();
-                
-                // 每一輪測距結束後，檢查是否需要送出 JSON
-                if (activeAnchors >= MIN_ANCHORS_TO_SEND) {
-                    formatPositionDataToJson(jsonBuffer, sizeof(jsonBuffer));
-                    Serial.printf(jsonBuffer);
-                    #ifdef ENABLE_WIFI
-                        broadcastUDP(jsonBuffer);
-                    #endif
-                }
-                
                 // test_run_info((unsigned char *)dist_str);
             }
         }
@@ -798,15 +762,12 @@ void loop() {
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
         }
 
-        
-
     } 
     else
     {
         /* Clear RX error/timeout events in the DW IC status register. */
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
     }
-    currentAnchorIndex = (currentAnchorIndex + 1) % NUM_ANCHORS;
     frame_seq_nb++;
     delay(RNG_DELAY_MS);
 }
