@@ -283,8 +283,8 @@ uint32_t          status_reg;
 /* ================================ */
 
 /* Messages */
-static uint8_t tx_poll_msg[12 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 'A', '1', 0xE0, 0, 0};
-static uint8_t rx_resp_msg[20 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 'A', '1', TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static uint8_t tx_poll_msg[12 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 0, 0, 0xE0, 0, 0};
+static uint8_t rx_resp_msg[20 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 0, 0, TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static uint8_t rx_buffer[RX_BUF_LEN];
 
 /* Initiator data */
@@ -738,12 +738,12 @@ void loop() {
                 distance = tof * SPEED_OF_LIGHT;
                 double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
                 double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
-
+                /*
                 Serial.printf(
                     "DATA, %3.2f, %3.2f\n",
                     poll_time_us + resp_time_us, distance
                 );
-                
+                */
                 // 在 Serial.printf 之後加入：
                 char currentName[3] = { targetID0, targetID1, 0 };
                 updateAnchorData(currentName, distance, tof);
@@ -754,7 +754,7 @@ void loop() {
                 // 每一輪測距結束後，檢查是否需要送出 JSON
                 if (activeAnchors >= MIN_ANCHORS_TO_SEND) {
                     formatPositionDataToJson(jsonBuffer, sizeof(jsonBuffer));
-                    Serial.printf(jsonBuffer);
+                    Serial.println(jsonBuffer);
                     #ifdef ENABLE_WIFI
                         broadcastUDP(jsonBuffer);
                     #endif

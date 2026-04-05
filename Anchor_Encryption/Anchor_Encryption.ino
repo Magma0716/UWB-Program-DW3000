@@ -288,7 +288,12 @@ void loop() {
 
             /* Check that the payload of the MAC frame matches the expected poll message
              * as should be sent by "SS TWR AES initiator" example. */
-            if (memcmp(rx_buffer, rx_poll_msg, aes_job_rx.payload_len) == 0)
+            //if (memcmp(rx_buffer, rx_poll_msg, aes_job_rx.payload_len) == 0)
+            
+            if(rx_buffer[9] == 0xE0 &&                                
+               rx_buffer[3] == PAN_ID[0] && rx_buffer[4] == PAN_ID[1] &&
+               rx_buffer[7] == ANCHOR_ADDR[0] && rx_buffer[8] == ANCHOR_ADDR[1])
+            
             {
                 uint32_t        resp_tx_time;
                 int             ret;
