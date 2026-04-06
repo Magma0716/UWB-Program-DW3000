@@ -181,7 +181,7 @@ class MultiTagSystem:
                 ekf = self.ekfs[tid]
                 ekf.predict() # 預測
                 
-                print(dists)
+                #print(dists)
                 
                 # 原始定位
                 raw_xyz = self.trilateration_3d(dists)

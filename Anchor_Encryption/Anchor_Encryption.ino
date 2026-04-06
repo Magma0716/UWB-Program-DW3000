@@ -2,6 +2,7 @@
 
 #include "dw3000.h"
 #include "dw3000_mac_802_15_4.h"
+#include "SPI.h"
 
 /* ================================ */
 /* ========== 數據修改區 =========== */
@@ -57,7 +58,7 @@ uint64_t resp_tx_ts;
 const uint8_t PAN_ID[] = { 0xCA, 0xDE };
 const uint8_t TAG_ADDR[] = { 'T', '1' };      
 extern dwt_txconfig_t txconfig_options;
-
+extern SPISettings _fastSPI;
 
 /* ================================ */
 /* ======== STS Encryption ======== */
@@ -182,6 +183,8 @@ void crypto_load(int padding) {
 void setup() {
     Serial.begin(115200);
 
+    _fastSPI = SPISettings(16000000L, MSBFIRST, SPI_MODE0);
+
     spiBegin(PIN_IRQ, PIN_RST);
     spiSelect(PIN_SS);
 
@@ -233,9 +236,19 @@ void setup() {
         aes_job_tx.payload_len = sizeof(tx_resp_msg); /* payload length */
     }
     else{
-        /* antenna delay */
+        // Enabling LEDs here for debug so that for each TX the D1 LED will flash on DW3000 red eval-shield boards.
+        dwt_setleds(DWT_LEDS_ENABLE | DWT_LEDS_INIT_BLINK);
+
+        /* Configure the TX spectrum parameters (power, PG delay and PG count) */
+        dwt_configuretxrf(&txconfig_options);
+
+        /* Apply default antenna delay value. See NOTE 2 below. */
         dwt_setrxantennadelay(RX_ANT_DLY);
         dwt_settxantennadelay(TX_ANT_DLY);
+
+        /* Next can enable TX/RX states output on GPIOs 5 and 6 to help debug, and also TX/RX LEDs
+        * Note, in real low power applications the LEDs should not be used. */
+        dwt_setlnapamode(DWT_LNA_ENABLE | DWT_PA_ENABLE);
     }
     
     
@@ -254,6 +267,9 @@ void loop() {
     while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_ERR))) {};
 
     if (status_reg & SYS_STATUS_RXFCG_BIT_MASK) {
+
+        uint32_t frame_len;
+
         /* STS lock check */
         if (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_CP_LOCK_BIT_MASK) && STS_ENCRYPTION) {
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
@@ -267,7 +283,7 @@ void loop() {
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
 
             /* Read data length that was received */
-            uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID)&RXFLEN_MASK;
+            frame_len = dwt_read32bitreg(RX_FINFO_ID)&RXFLEN_MASK;
 
             /* A frame has been received: firstly need to read the MHR and check this frame is what we expect:
              * the destination address should match our source address (frame filtering can be configured for this check,
@@ -385,33 +401,73 @@ void loop() {
         }
         else
         {
-            dwt_readrxdata(rx_buffer, 24, 0);
-            rx_buffer[2] = 0;
-            if (memcmp(rx_buffer, rx_poll_msg, 10) == 0) {
-                uint64_t rx_ts = get_rx_timestamp_u64();
-                uint32_t tx_time = (rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
-                dwt_setdelayedtrxtime(tx_time);
-
-                uint64_t tx_ts = (((uint64_t)(tx_time & 0xFFFFFFFEUL)) << 8) + TX_ANT_DLY;
-                resp_msg_set_ts(&tx_resp_msg[RESP_MSG_POLL_RX_TS_IDX], rx_ts);
-                resp_msg_set_ts(&tx_resp_msg[RESP_MSG_RESP_TX_TS_IDX], tx_ts);
-
-                dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0);
-                dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1);
-
-                if (dwt_starttx(DWT_START_TX_DELAYED) == DWT_SUCCESS) {
-                    while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS_BIT_MASK));
-                    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
-                }
-
-                //frame_seq_nb++;
-            }
+            /* Clear good RX frame event in the DW IC status register. */
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
-        }
-        
-        // dwt_readrxdata(rx_buffer, RX_BUF_LEN, 0);
 
+            /* A frame has been received, read it into the local buffer. */
+            frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
+            if (frame_len <= sizeof(rx_buffer))
+            {
+                dwt_readrxdata(rx_buffer, frame_len, 0);
         
+                // 提取發送者 (Tag) 的 ID
+                uint8_t incoming_tag_id[2];
+                incoming_tag_id[0] = rx_buffer[5]; 
+                incoming_tag_id[1] = rx_buffer[6];
+
+                // 將回傳目標設為該 Tag
+                tx_resp_msg[7] = incoming_tag_id[0];
+                tx_resp_msg[8] = incoming_tag_id[1];
+                
+                /* Check that the frame is a poll sent by "SS TWR initiator" example.
+                * As the sequence number field of the frame is not relevant, it is cleared to simplify the validation of the frame. */
+                rx_buffer[2] = 0;
+                //if (memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) == 0) <------
+                if(rx_buffer[9] == 0xE0 &&                                
+                rx_buffer[3] == PAN_ID[0] && rx_buffer[4] == PAN_ID[1] &&
+                rx_buffer[7] == ANCHOR_ADDR[0] && rx_buffer[8] == ANCHOR_ADDR[1])
+                {
+                    uint32_t resp_tx_time;
+                    int ret;
+
+                    /* Retrieve poll reception timestamp. */
+                    poll_rx_ts = get_rx_timestamp_u64();
+
+                    /* Compute response message transmission time. See NOTE 7 below. */
+                    resp_tx_time = (poll_rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
+                    dwt_setdelayedtrxtime(resp_tx_time);
+
+                    /* Response TX timestamp is the transmission time we programmed plus the antenna delay. */
+                    resp_tx_ts = (((uint64_t)(resp_tx_time & 0xFFFFFFFEUL)) << 8) + TX_ANT_DLY;
+
+                    /* Write all timestamps in the final message. See NOTE 8 below. */
+                    resp_msg_set_ts(&tx_resp_msg[RESP_MSG_POLL_RX_TS_IDX], poll_rx_ts);
+                    resp_msg_set_ts(&tx_resp_msg[RESP_MSG_RESP_TX_TS_IDX], resp_tx_ts);
+
+                    /* Write and send the response message. See NOTE 9 below. */
+                    tx_resp_msg[2] = frame_seq_nb;
+                    dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0); /* Zero offset in TX buffer. */
+                    dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1);          /* Zero offset in TX buffer, ranging. */
+                    ret = dwt_starttx(DWT_START_TX_DELAYED);
+
+                    /* If dwt_starttx() returns an error, abandon this ranging exchange and proceed to the next one. See NOTE 10 below. */
+                    if (ret == DWT_SUCCESS)
+                    {
+                        /* Poll DW IC until TX frame sent event set. See NOTE 6 below. */
+                        while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS_BIT_MASK))
+                        {
+                        };
+
+                        /* Clear TXFRS event. */
+                        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
+
+                        /* Increment frame sequence number after transmission of the poll message (modulo 256). */
+                        frame_seq_nb++;
+                    }
+                }
+            }
+        }
+        // dwt_readrxdata(rx_buffer, RX_BUF_LEN, 0);
     }
     else
     {

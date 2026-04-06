@@ -2,6 +2,7 @@
 
 #include "dw3000.h"
 #include "dw3000_mac_802_15_4.h"
+#include "SPI.h"
 
 /* ================================ */
 /* ========== 數據修改區 =========== */
@@ -74,8 +75,11 @@
 #define STS_OFFSET 10.65  // STS mode 偏差
 
 const uint8_t PAN_ID[] = { 0xCA, 0xDE };     
-const uint8_t TAG_ADDR[] = { 'T', '1' };      
+const uint8_t TAG_ADDR[] = { 'T', '1' };   
+
 extern dwt_txconfig_t txconfig_options;
+
+static bool isExpectedFrame(const uint8_t *frame, const uint32_t len);
 
 static double tof;
 static double distance;
@@ -317,12 +321,20 @@ static uint8_t rx_buffer[RX_BUF_LEN];
 static uint32_t frame_seq_nb = 0;
 
 /* function */
-bool isExpectedFrame(uint8_t *buffer) {
-    uint8_t saved_sn = buffer[2];
-    buffer[2] = 0;
-    bool match = (memcmp(buffer, rx_resp_msg, 10) == 0);
-    buffer[2] = saved_sn;
-    return match;
+static bool isExpectedFrame(const uint8_t *frame, const uint32_t len) {
+    if (len < (7 + 2))
+        return false;
+
+    // 檢查基本訊息格式 (包含 PAN ID 等)
+    /*if (memcmp(frame, rx_resp_msg, ALL_MSG_COMMON_LEN) != 0)
+        return false;*/
+    if (frame[3] == PAN_ID[0] && frame[4] == PAN_ID[1] && frame[9] == 0xE1) {
+        // 檢查這個回應是不是給我的 (Tag ID 是否相符)
+        if (frame[7] == TAG_ADDR[0] && frame[8] == TAG_ADDR[1]) {
+            return true;
+        }
+    }
+    return true;
 }
 
 void crypto_load(int padding) {
@@ -611,13 +623,32 @@ void setup() {
     }
     else
     {
-        /* Antenna delay */
+        // Enabling LEDs here for debug so that for each TX the D1 LED will flash on DW3000 red eval-shield boards.
+        dwt_setleds(DWT_LEDS_ENABLE | DWT_LEDS_INIT_BLINK);
+
+        /* Configure the TX spectrum parameters (power, PG delay and PG count) */
+        dwt_configuretxrf(&txconfig_options);
+
+        /* Apply default antenna delay value. See NOTE 2 below. */
         dwt_setrxantennadelay(RX_ANT_DLY);
         dwt_settxantennadelay(TX_ANT_DLY);
 
-        /* 設定 RX 延遲及 timeout */
+        /* Set expected response's delay and timeout. See NOTE 1 and 5 below.
+        * As this example only handles one incoming frame with always the same delay and timeout, those values can be set here once for all. */
         dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
         dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
+
+        /* Next can enable TX/RX states output on GPIOs 5 and 6 to help debug, and also TX/RX LEDs
+        * Note, in real low power applications the LEDs should not be used. */
+        dwt_setlnapamode(DWT_LNA_ENABLE | DWT_PA_ENABLE);
+
+        Serial.println("Range RX");
+        Serial.println("Setup over........");
+
+        // Initialize anchor array
+        for (int i = 0; i < MAX_ANCHORS; i++) {
+            anchorArray[i].active = false;
+        }
     }
 
     
@@ -646,10 +677,6 @@ void loop() {
     // 更新預期接收的 ID (用於後續驗證)
     rx_resp_msg[5] = targetID0;
     rx_resp_msg[6] = targetID1;
-
-    /* 距離設定 */
-    static float smooth_dist = 0;
-    static bool first_run = true;
 
     /* AES setting */
     if(AES_ENCRYPTION){
@@ -715,7 +742,7 @@ void loop() {
     else
     {
         tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
-        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
+        //dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
         dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0);
         dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1);
         dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
@@ -724,15 +751,17 @@ void loop() {
 
     while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {};
 
+    frame_seq_nb++;
+
     if (status_reg & SYS_STATUS_RXFCG_BIT_MASK) {
-        
+        uint32_t frame_len;
         /* 解密 respone */
         if(AES_ENCRYPTION){
             /* Clear good RX frame event in the DW IC status register. */
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
 
             /* Read data length that was received */
-            uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID)&RXFLEN_MASK;
+            frame_len = dwt_read32bitreg(RX_FINFO_ID)&RXFLEN_MASK;
 
             /* A frame has been received: firstly need to read the MHR and check this frame is what we expect:
              * the destination address should match our source address (frame filtering can be configured for this check,
@@ -822,8 +851,17 @@ void loop() {
             }
         }
         else{
-            dwt_readrxdata(rx_buffer, 24, 0);
-            if (isExpectedFrame(rx_buffer)) {
+            
+            /* Clear good RX frame event in the DW IC status register. */
+            dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
+            
+            /* A frame has been received, read it into the local buffer. */
+            frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
+            if (frame_len <= sizeof(rx_buffer))
+            {
+                dwt_readrxdata(rx_buffer, frame_len, 0);
+                rx_buffer[2] = 0;
+                if (isExpectedFrame(rx_buffer, frame_len)) {
                 
                 // 計算 tof 距離
                 uint32_t t1, t2, t3, t4;
@@ -837,27 +875,48 @@ void loop() {
                 resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &t3);
                 resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &t4);
 
-                double raw = (((t2 - t1) - (t4 - t3) * (1 - ratio)) / 2.0) * DWT_TIME_UNITS * 299792458.0;
+                double raw = (((t2 - t1) - (t4 - t3) * (1 - ratio)) / 2.0) * DWT_TIME_UNITS;
+                double distance = raw * SPEED_OF_LIGHT;
+
+                char name[3] = { 0 };
+                memcpy(name, rx_buffer + 5, 2);
+
+                /* Display computed distance on LCD. */
+                char dist_str[32];
+                snprintf(dist_str, sizeof(dist_str), "A:%s, DIST: %3.2f m", name, distance);
+                test_run_info((unsigned char *)dist_str);
+
+                /* Update anchor data */
+                updateAnchorData(name, distance, raw);
+
+                /* Clean up invalid anchors */
+                cleanupInvalidAnchors();
+
+                /* If we have enough anchors, send position data */
+                if (activeAnchors >= MIN_ANCHORS_TO_SEND) {
+                    char jsonBuffer[512];
+                    formatPositionDataToJson(jsonBuffer, 512);
+                    Serial.println(jsonBuffer);  // Serial output without rate limiting
+                    #ifdef ENABLE_WIFI
+                        broadcastUDP(jsonBuffer);    // UDP broadcast with rate limiting
+                    #endif
+                }
+
                 double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
                 double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
 
                 if (raw > 5.0 && STS_ENCRYPTION) raw -= STS_OFFSET; // STS mode 偏差 (11m) 
-
-                if (raw > 0 && raw < 40.0) {
-                    if (first_run) { smooth_dist = raw; first_run = false; }
-                    else { smooth_dist = (smooth_dist * 0.8) + (raw * 0.2); }
-                }
+                
                 Serial.printf(
                     "DATA, %3.2f, %3.2f\n",
                     poll_time_us + resp_time_us, raw
                 );
+                
 
+                }
+            //dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
             }
-            dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
         }
-
-        
-
     } 
     else
     {
@@ -865,6 +924,5 @@ void loop() {
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
     }
     currentAnchorIndex = (currentAnchorIndex + 1) % NUM_ANCHORS;
-    frame_seq_nb++;
     delay(RNG_DELAY_MS);
 }

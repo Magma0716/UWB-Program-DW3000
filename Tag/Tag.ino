@@ -416,7 +416,7 @@ void loop()
           formatPositionDataToJson(jsonBuffer, JSON_BUFFER_SIZE);
           Serial.println(jsonBuffer);  // Serial output without rate limiting
 #ifdef ENABLE_WIFI
-          broadcastUDP(jsonBuffer);    // UDP broadcast with rate limiting
+        broadcastUDP(jsonBuffer);    // UDP broadcast with rate limiting
 #endif
         }
       }
