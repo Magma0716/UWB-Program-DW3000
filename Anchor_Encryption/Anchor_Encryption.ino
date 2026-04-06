@@ -7,11 +7,6 @@
 /* ========== 數據修改區 =========== */
 /* ================================ */
 
-// 延遲時間
-#define POLL_RX_TO_RESP_TX_DLY_UUS 2000 // Treply (未加密:600, STS加密:1000, AES加密:2000)
-#define RESP_MSG_POLL_RX_TS_IDX 0       // (未加密:10, AES加密:0)
-#define RESP_MSG_RESP_TX_TS_IDX 4       // (未加密:14, AES加密:4)
-
 // Anchor 名稱 (e.g. A1, A2, A3...)
 const uint8_t ANCHOR_ADDR[] = { 'A', '4' };  
 
@@ -19,7 +14,7 @@ const uint8_t ANCHOR_ADDR[] = { 'A', '4' };
 #define STS_ENCRYPTION false  // false, true
 
 // AES 加密 (for Payload distance)
-#define AES_ENCRYPTION true  // false, true
+#define AES_ENCRYPTION false  // false, true
 
 // Padding
 #define Padding 0
@@ -28,6 +23,25 @@ const uint8_t ANCHOR_ADDR[] = { 'A', '4' };
 /* ===== DW3000 Basic Config ====== */
 /* ================================ */
 
+// 延遲時間
+#if STS_ENCRYPTION == false && AES_ENCRYPTION == false // non-encryption
+    #define POLL_RX_TO_RESP_TX_DLY_UUS 600
+    #define RESP_MSG_POLL_RX_TS_IDX 10
+    #define RESP_MSG_RESP_TX_TS_IDX 14
+#elif STS_ENCRYPTION == true && AES_ENCRYPTION == false // STS
+    #define POLL_RX_TO_RESP_TX_DLY_UUS 1000
+    #define RESP_MSG_POLL_RX_TS_IDX 10
+    #define RESP_MSG_RESP_TX_TS_IDX 14   
+#elif STS_ENCRYPTION == false && AES_ENCRYPTION == true // AES
+    #define POLL_RX_TO_RESP_TX_DLY_UUS 2000
+    #define RESP_MSG_POLL_RX_TS_IDX 0
+    #define RESP_MSG_RESP_TX_TS_IDX 4  
+
+#else // this isn't test. Do not use this section.
+    #define POLL_RX_TO_RESP_TX_DLY_UUS 1000
+    #define RESP_MSG_POLL_RX_TS_IDX 0
+    #define RESP_MSG_RESP_TX_TS_IDX 4  
+#endif
 
 #define PIN_RST 27
 #define PIN_IRQ 34

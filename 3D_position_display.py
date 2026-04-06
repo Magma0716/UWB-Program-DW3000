@@ -26,17 +26,24 @@ class UWB_EKF_3D:
             an_x, an_y, an_z = anchor_pos[aid]
             dx, dy, dz = self.X[0,0]-an_x, self.X[1,0]-an_y, self.X[2,0]-an_z
 
+            # 預測距離
             z_pred = np.sqrt(dx**2 + dy**2 + dz**2)
             if z_pred < 0.01: z_pred = 0.01
             
             H = np.array([[dx/z_pred, dy/z_pred, dz/z_pred, 0, 0, 0]])
+            
+            # 計算殘差
             innovation = z_meas - z_pred
+        
             S = np.dot(np.dot(H, self.P), H.T) + self.R_val
             S_val = S[0,0]
             
+            # 異常值剔除
             mahalanobis_sq = (innovation**2) / S_val
             if mahalanobis_sq > 9.0: continue
             
+            
+            # S = np.dot(np.dot(H, self.P), H.T) + self.R_val
             K = np.dot(self.P, H.T) / S_val
             self.X += K * innovation
             self.P = np.dot((np.eye(6) - np.dot(K, H)), self.P)
@@ -44,27 +51,27 @@ class UWB_EKF_3D:
     def get_pos(self):
         return self.X[0, 0], self.X[1, 0], self.X[2, 0]
 
-    # --- 【新增】取得當前定位的不確定性 (公尺) ---
-    def get_uncertainty(self):
-        # 取出 P 矩陣中對應 X 和 Y 座標的方差並開根號 (標準差)
-        return np.sqrt(self.P[0, 0]), np.sqrt(self.P[1, 1])
-
 class MultiTagSystem:
     def __init__(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # 請確保此 IP 與你電腦 IP 一致
         self.sock.bind(('192.168.0.108', 8001))
         self.sock.setblocking(False)
         
+        # 設置 4 個 Anchor 位置
         self.anchors = {
-            'A1': (0.0, 0.0, 0.0), 'A2': (2.0, 0.0, 0.0),
-            'A3': (1.0, 1.732, 0.0), 'A4': (1.0, 0.577, 1.633),
+            'A1': (0.0, 0.0, 0.0),
+            'A2': (2.0, 0.0, 0.0),
+            'A3': (1.0, 1.732, 0.0),
+            'A4': (1.0, 0.577, 1.633),
         }
         
+        # 初始化多個 Tag 的 EKF 與 軌跡
         self.tags = {'T1': '#4CAF50', 'T2': '#2E7D32', 'T3': '#E91E63'}
         self.ekfs = {tid: UWB_EKF_3D() for tid in self.tags}
         self.trails = {tid: ([], [], []) for tid in self.tags}
-
+        self.raw_history = {tid: [] for tid in self.tags}
+        
+        # 創建畫布
         self.fig = plt.figure(figsize=(15, 7))
         self.ax2d = self.fig.add_subplot(121)
         self.ax3d = self.fig.add_subplot(122, projection='3d')
@@ -72,56 +79,97 @@ class MultiTagSystem:
         self.setup_axes()
 
     def setup_axes(self):
-        all_x = [p[0] for p in self.anchors.values()]; all_y = [p[1] for p in self.anchors.values()]; all_z = [p[2] for p in self.anchors.values()]
-        pad = 0.5
-        self.ax2d.set_title("2D Tracking (Circle = Uncertainty)")
-        self.ax2d.set_xlim([min(all_x)-pad, max(all_x)+pad]); self.ax2d.set_ylim([min(all_y)-pad, max(all_y)+pad])
+        # anchor 位置
+        all_x = [p[0] for p in self.anchors.values()]
+        all_y = [p[1] for p in self.anchors.values()]
+        all_z = [p[2] for p in self.anchors.values()]
+        pad = 0.2
+        
+        # 2D 設置
+        self.ax2d.set_title("2D Position Tracking")
+        #self.ax2d.set_xlim([-1, 9]); self.ax2d.set_ylim([-1, 7])
+        self.ax2d.set_xlim([min(all_x)-pad, max(all_x)+pad])
+        self.ax2d.set_ylim([min(all_y)-pad, max(all_y)+pad])
         self.ax2d.grid(True); self.ax2d.set_aspect('equal')
         
+        # 3D 設置
         self.ax3d.set_title("3D Position Tracking")
-        self.ax3d.set_xlim([min(all_x)-pad, max(all_x)+pad]); self.ax3d.set_ylim([min(all_y)-pad, max(all_y)+pad]); self.ax3d.set_zlim([min(all_z)-pad, max(all_z)+pad])
+        #self.ax3d.set_xlim([-1, 9]); self.ax3d.set_ylim([-1, 7]); self.ax3d.set_zlim([0, 4])
+        self.ax3d.set_xlim([min(all_x)-pad, max(all_x)+pad])
+        self.ax3d.set_ylim([min(all_y)-pad, max(all_y)+pad])
+        self.ax3d.set_zlim([min(all_z)-pad, max(all_z)+pad])
         
+        # 畫出 Anchor
         for aid, pos in self.anchors.items():
-            self.ax2d.plot(pos[0], pos[1], 'bs', markersize=8)
+            self.ax2d.plot(pos[0], pos[1], 'bs', markersize=8, label=aid if 'A1' in aid else "")
             self.ax3d.scatter(pos[0], pos[1], pos[2], color='blue', marker='s', s=60)
 
+        # 初始化繪圖對象
         self.plot_objs = {}
         for tid, color in self.tags.items():
+            ## EKF
+            # 2D
             ln2d, = self.ax2d.plot([], [], color=color, alpha=0.3)
             pt2d, = self.ax2d.plot([], [], color=color, marker='o', markersize=10, label=f'Tag {tid}')
+            cloud2d, = self.ax2d.plot([], [], 'kx', markersize=4, alpha=0.2)
+            status2d = self.ax2d.text(0, 0, '', fontsize=8, color='black', bbox=dict(facecolor='white', alpha=0.5))
             
-            # --- 【新增】不確定性圓圈 (信心半徑) ---
-            circle = plt.Circle((0, 0), 0.1, color=color, fill=True, alpha=0.1)
-            self.ax2d.add_patch(circle)
-            
-            # --- 【新增】顯示文字資訊 ---
-            txt2d = self.ax2d.text(0, 0, '', fontsize=9, color=color)
-
+            # 3D
             ln3d, = self.ax3d.plot([], [], [], color=color, alpha=0.3)
             pt3d, = self.ax3d.plot([], [], [], color=color, marker='o', markersize=8)
-            raw2d, = self.ax2d.plot([], [], 'kx', markersize=8, markeredgewidth=1)
-            raw3d, = self.ax3d.plot([], [], [], 'kx', markersize=8, markeredgewidth=1)
             
+            ## raw data
+            # 2D
+            raw2d, = self.ax2d.plot([], [], 'kx', markersize=8, markeredgewidth=1, label='Raw Data' if tid == 'T1' else "")
+            # 3D
+            raw3d, = self.ax3d.plot([], [], [], 'kx', markersize=8, markeredgewidth=1, label='Raw Data' if tid == 'T1' else "")
+            
+            # for update 
             self.plot_objs[tid] = {
-                'pt2d': pt2d, 'ln2d': ln2d, 'circle': circle, 'txt2d': txt2d,
+                'pt2d': pt2d, 'ln2d': ln2d, 'cloud2d': cloud2d, 'status2d': status2d,
                 'pt3d': pt3d, 'ln3d': ln3d, 'raw2d': raw2d, 'raw3d': raw3d
             }
-
+            
+        #self.ax2d.legend(loc='upper right', fontsize='small')
+  
     def trilateration_3d(self, dists):
-        if len(dists) < 4: return None
-        p1 = np.array(self.anchors['A1']); d1 = dists['A1']
+        """
+        dists: {'A1': d1, 'A2': d2, ...}
+        返回: (x, y, z) 的原始定位點
+        """
+        if len(dists) < 4:
+            return None
+            
+        p1 = np.array(self.anchors['A1'])
+        d1 = dists['A1']
+        
         A, B = [], []
         for aid in ['A2', 'A3', 'A4']:
-            pi = np.array(self.anchors[aid]); di = dists[aid]
+            pi = np.array(self.anchors[aid])
+            di = dists[aid]
+            # 線性化矩陣：2(Pi - P1) * X = d1^2 - di^2 - |P1|^2 + |Pi|^2
             A.append(2 * (pi - p1))
             B.append(d1**2 - di**2 - np.sum(p1**2) + np.sum(pi**2))
+            
         try:
+            # 最小平方法求解 (AX = B)
             raw_pos, _, _, _ = np.linalg.lstsq(np.array(A), np.array(B), rcond=None)
-            return raw_pos
-        except: return None
+            return raw_pos  # [x, y, z]
+        except:
+            return None
+    
+    def calculate_residual(self, pos, dists):
+        errors = []
+        for aid, d_meas in dists.items():
+            if aid in self.anchors:
+                anc_pos = np.array(self.anchors[aid])
+                d_calc = np.linalg.norm(pos - anc_pos)
+                errors.append((d_calc - d_meas)**2)
+        return np.sqrt(np.mean(errors)) if errors else 0
     
     def update(self, frame):
         updated_tags = set()
+        
         while True:
             try:
                 data, _ = self.sock.recvfrom(2048)
@@ -131,35 +179,58 @@ class MultiTagSystem:
                 
                 dists = {a['id']: a['distance'] for a in msg['anchors']}
                 ekf = self.ekfs[tid]
-                ekf.predict()
+                ekf.predict() # 預測
+                
+                print(dists)
+                
+                # 原始定位
                 raw_xyz = self.trilateration_3d(dists)
+                
+                # 更新
                 ekf.update(dists, self.anchors)
                 
+                # 記錄軌跡
                 x, y, z = ekf.get_pos()
                 tx, ty, tz = self.trails[tid]
                 tx.append(x); ty.append(y); tz.append(z)
                 if len(tx) > 30: tx.pop(0); ty.pop(0); tz.pop(0)
                 
-                # --- 【新增】計算偏移殘差 ---
-                offset = 0
-                if raw_xyz is not None:
-                    offset = np.linalg.norm(np.array([x,y,z]) - raw_xyz)
-                    self.plot_objs[tid]['raw2d'].set_data([raw_xyz[0]], [raw_xyz[1]])
-                    self.plot_objs[tid]['raw3d'].set_data_3d([raw_xyz[0]], [raw_xyz[1]], [raw_xyz[2]])
-                
-                # 更新圓圈與文字
-                sigma_x, sigma_y = ekf.get_uncertainty()
-                objs = self.plot_objs[tid]
-                objs['circle'].set_center((x, y))
-                objs['circle'].set_radius(sigma_x + sigma_y) # 半徑反映不確定性
-                objs['txt2d'].set_position((x + 0.1, y + 0.1))
-                objs['txt2d'].set_text(f'Off: {offset*100:.1f}cm') # 顯示公分誤差
-
                 updated_tags.add(tid)
+                
+                # Raw Data 顯示
+                if raw_xyz is not None:
+                    # 挑變速率
+                    raw_vel = 0
+                    if self.raw_history[tid]:
+                        prev_raw = self.raw_history[tid][-1]
+                        raw_vel = np.linalg.norm(raw_xyz - prev_raw)
 
+                    # 剩餘誤差
+                    residual = self.calculate_residual(raw_xyz, dists)
+                    
+                    # 軌跡雲
+                    self.raw_history[tid].append(raw_xyz)
+                    
+                    ## 更新畫面
+                    objs = self.plot_objs[tid]
+                    objs['raw2d'].set_data([raw_xyz[0]], [raw_xyz[1]])
+                    objs['raw3d'].set_data_3d([raw_xyz[0]], [raw_xyz[1]], [raw_xyz[2]])
+
+                    # 軌跡雲
+                    raw_pts = np.array(self.raw_history[tid])
+                    objs['cloud2d'].set_data(raw_pts[:, 0], raw_pts[:, 1])
+                    
+                    # 文字資訊
+                    info_text = (f"Tag: {tid}\n"
+                                 f"Residual: {residual*100:.1f}cm\n"
+                                 f"Raw Jump: {raw_vel*100:.1f}cm")
+                    objs['status2d'].set_position((raw_xyz[0] + 0.1, raw_xyz[1] + 0.1))
+                    objs['status2d'].set_text(info_text)
+                    
             except BlockingIOError: break
-            except Exception as e: break
+            except Exception:       break
 
+        # 統一刷新畫布上受影響的對象
         for tid in updated_tags:
             x, y, z = self.ekfs[tid].get_pos()
             tx, ty, tz = self.trails[tid]

@@ -7,14 +7,8 @@
 /* ========== 數據修改區 =========== */
 /* ================================ */
 
-// 延遲時間
-#define POLL_TX_TO_RESP_RX_DLY_UUS 1720  // Tround (未加密:240, STS加密:500, AES加密:1720)
-#define RESP_RX_TIMEOUT_UUS 250          // T4 (未加密:400, STS加密:1500, AES加密:250)
-#define RESP_MSG_POLL_RX_TS_IDX 0        // (未加密:10, AES加密:0)
-#define RESP_MSG_RESP_TX_TS_IDX 4        // (未加密:14, AES加密:4)
-
-// Tag 強迫休息時間
-#define RNG_DELAY_MS 10  // <-- 改小能讓輸出變快
+// Tag 強迫休息時間 (改小能讓輸出變快)
+#define RNG_DELAY_MS 10
 
 // Anchor 數量
 #define NUM_ANCHORS 4
@@ -23,10 +17,13 @@
 #define STS_ENCRYPTION false  // false, true
 
 // AES 加密 (for Payload distance)
-#define AES_ENCRYPTION true  // false, true
+#define AES_ENCRYPTION false  // false, true
 
 // Padding
 #define Padding 0
+
+// Nonce (IV)
+#define Random_Nonce_Byte 0
 
 // Wifi
 #define tmp_ssid "Alan6711"
@@ -39,6 +36,30 @@
 /* ================================ */
 /* ===== DW3000 Basic Config ====== */
 /* ================================ */
+
+// 延遲時間
+#if STS_ENCRYPTION == false && AES_ENCRYPTION == false // non-encryption
+    #define POLL_TX_TO_RESP_RX_DLY_UUS 240
+    #define RESP_RX_TIMEOUT_UUS 400
+    #define RESP_MSG_POLL_RX_TS_IDX 10
+    #define RESP_MSG_RESP_TX_TS_IDX 14
+#elif STS_ENCRYPTION == true && AES_ENCRYPTION == false // STS
+    #define POLL_TX_TO_RESP_RX_DLY_UUS 500
+    #define RESP_RX_TIMEOUT_UUS 1500
+    #define RESP_MSG_POLL_RX_TS_IDX 10
+    #define RESP_MSG_RESP_TX_TS_IDX 14   
+#elif STS_ENCRYPTION == false && AES_ENCRYPTION == true // AES
+    #define POLL_TX_TO_RESP_RX_DLY_UUS 1720
+    #define RESP_RX_TIMEOUT_UUS 250
+    #define RESP_MSG_POLL_RX_TS_IDX 0
+    #define RESP_MSG_RESP_TX_TS_IDX 4  
+
+#else // this isn't test. Do not use this section.
+    #define POLL_TX_TO_RESP_RX_DLY_UUS 1000
+    #define RESP_RX_TIMEOUT_UUS 250
+    #define RESP_MSG_POLL_RX_TS_IDX 0
+    #define RESP_MSG_RESP_TX_TS_IDX 4  
+#endif
 
 #define PIN_RST 27
 #define PIN_IRQ 34
@@ -342,12 +363,47 @@ bool set_unique_random_iv() {
     for (int tries = 0; tries < 100000; tries++) {
         uint32_t r = esp_random();
         if (iv_table_insert_if_new(r)) {
+            
             // 寫入 MAC
-            mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(r & 0xFF);
-            mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = (uint8_t)((r >> 8) & 0xFF);
-            mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = (uint8_t)((r >> 16) & 0xFF);
-            mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = (uint8_t)((r >> 24) & 0xFF);
+            switch (Random_Nonce_Byte) {
+                case 1:
+                    // 僅使用低 8 位元
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(r & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = 0;
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = 0;
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = 0;
+                    break;
+
+                case 2:
+                    // 使用低 16 位元
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(r & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = (uint8_t)((r >> 8) & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = 0;
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = 0;
+                    break;
+
+                case 3:
+                    // 使用低 24 位元
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(r & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = (uint8_t)((r >> 8) & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = (uint8_t)((r >> 16) & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = 0;
+                    break;
+
+                case 4:
+                    // 完整 32 位元隨機值
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(r & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = (uint8_t)((r >> 8) & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = (uint8_t)((r >> 16) & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = (uint8_t)((r >> 24) & 0xFF);
+                    break;
+
+                default:
+                    memset(mac_frame.mhr_802_15_4.aux_security.frame_counter, 0, 4);
+                    break;
+            }
             return true;
+            
         }
     }
     return false;
@@ -599,9 +655,11 @@ void loop() {
     if(AES_ENCRYPTION){
 
         // 生成不重複隨機 IV 並填入
-        if(!set_unique_random_iv()) { 
-            Serial.println("Error: IV Table Full!"); 
-            while(1); 
+        if(Random_Nonce_Byte != 0){
+            if(!set_unique_random_iv()) { 
+                Serial.println("Error: IV Table Full!"); 
+                while(1); 
+            }
         }
 
         /* Program the correct key to be used */
