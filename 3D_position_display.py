@@ -1,3 +1,4 @@
+import time
 import socket
 import json
 import numpy as np
@@ -53,6 +54,9 @@ class UWB_EKF_3D:
 
 class MultiTagSystem:
     def __init__(self):
+        self.target_n = 1000
+        self.status = '加密47pad'
+        
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(('192.168.0.108', 8001))
         self.sock.setblocking(False)
@@ -70,12 +74,16 @@ class MultiTagSystem:
         self.ekfs = {tid: UWB_EKF_3D() for tid in self.tags}
         self.trails = {tid: ([], [], []) for tid in self.tags}
         self.raw_history = {tid: [] for tid in self.tags}
+        self.history_data = {tid: {'residual': [], 'jump': []} for tid in self.tags}
+        self.has_saved = {tid: False for tid in self.tags}
         
         # 創建畫布
         self.fig = plt.figure(figsize=(15, 7))
         self.ax2d = self.fig.add_subplot(121)
         self.ax3d = self.fig.add_subplot(122, projection='3d')
 
+        self.fig.canvas.mpl_connect('close_event', self.on_close)
+        
         self.setup_axes()
 
     def setup_axes(self):
@@ -83,7 +91,7 @@ class MultiTagSystem:
         all_x = [p[0] for p in self.anchors.values()]
         all_y = [p[1] for p in self.anchors.values()]
         all_z = [p[2] for p in self.anchors.values()]
-        pad = 0.2
+        pad = 1
         
         # 2D 設置
         self.ax2d.set_title("2D Position Tracking")
@@ -181,8 +189,6 @@ class MultiTagSystem:
                 ekf = self.ekfs[tid]
                 ekf.predict() # 預測
                 
-                #print(dists)
-                
                 # 原始定位
                 raw_xyz = self.trilateration_3d(dists)
                 
@@ -209,28 +215,40 @@ class MultiTagSystem:
                     residual = self.calculate_residual(raw_xyz, dists)
                     
                     # 軌跡雲
+                    self.history_data[tid]['residual'].append(residual)
+                    self.history_data[tid]['jump'].append(raw_vel)
                     self.raw_history[tid].append(raw_xyz)
                     
                     ## 更新畫面
                     objs = self.plot_objs[tid]
                     objs['raw2d'].set_data([raw_xyz[0]], [raw_xyz[1]])
                     objs['raw3d'].set_data_3d([raw_xyz[0]], [raw_xyz[1]], [raw_xyz[2]])
-
+                    N = len(np.array(self.history_data['T1']['residual']))
+                    print(N)
+                    
                     # 軌跡雲
                     raw_pts = np.array(self.raw_history[tid])
                     objs['cloud2d'].set_data(raw_pts[:, 0], raw_pts[:, 1])
                     
                     # 文字資訊
+                    '''
                     info_text = (f"Tag: {tid}\n"
                                  f"Residual: {residual*100:.1f}cm\n"
                                  f"Raw Jump: {raw_vel*100:.1f}cm")
                     objs['status2d'].set_position((raw_xyz[0] + 0.1, raw_xyz[1] + 0.1))
-                    objs['status2d'].set_text(info_text)
+                    objs['status2d'].set_text(info_text)'''
+                    
+                    # 存檔
+                    for tid in self.tags:
+                        current_n = len(self.history_data[tid]['residual'])
+                        if current_n >= self.target_n and not self.has_saved[tid]:
+                            self.save_all_plots(tid, current_n)
+                            self.has_saved[tid] = True
                     
             except BlockingIOError: break
             except Exception:       break
 
-        # 統一刷新畫布上受影響的對象
+        # 刷新畫布上受影響的對象
         for tid in updated_tags:
             x, y, z = self.ekfs[tid].get_pos()
             tx, ty, tz = self.trails[tid]
@@ -242,6 +260,84 @@ class MultiTagSystem:
 
         return []
 
+    def on_close(self, event):
+        self.plot_statistics()
+    
+    def plot_statistics(self):
+        for tid in self.tags:
+            res_data = np.array(self.history_data[tid]['residual'])
+            jump_data = np.array(self.history_data[tid]['jump'])
+            
+            if len(res_data) == 0: continue
+            
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+            
+            # 左圖：Residual (剩餘誤差)
+            avg_res = np.mean(res_data)
+            std_res = np.std(res_data)
+            ax1.plot(res_data, color='blue', marker='o', markersize=3, alpha=0.5, linestyle='-', linewidth=0.5)
+            ax1.axhline(avg_res, color='red', linestyle='--', label=f'Avg: {avg_res:.4f} m')
+            ax1.set_title(f"Residual (Error) - Tag {tid}\nAvg={avg_res:.4f} m | Std={std_res:.4f} m | N={len(res_data)}")
+            ax1.set_ylabel("Error (m)")
+            ax1.set_xlabel("Sample Index")
+            ax1.grid(True, alpha=0.3)
+            ax1.legend()
+
+            # 右圖：Raw Jump (跳動速率/位移)
+            avg_jump = np.mean(jump_data)
+            std_jump = np.std(jump_data)
+            ax2.plot(jump_data, color='orange', marker='x', markersize=3, alpha=0.6, linestyle='-', linewidth=0.5)
+            ax2.axhline(avg_jump, color='red', linestyle='--', label=f'Avg: {avg_jump:.4f} m')
+            ax2.set_title(f"Raw Data Jump - Tag {tid}\nAvg={avg_jump:.4f} m | Std={std_jump:.4f} m | N={len(jump_data)}")
+            ax2.set_ylabel("Displacement (m)")
+            ax2.set_xlabel("Sample Index")
+            ax2.grid(True, alpha=0.3)
+            ax2.legend()
+
+            plt.tight_layout()
+        
+        plt.show()
+    
+    def save_all_plots(self, tid, n_count):
+        """2D、3D定位"""
+        self.fig.savefig(f"{self.status}_{tid}_N{self.target_n}_{time.strftime("%Y%m%d_%H%M%S")}-1.png")
+        
+        """存檔剩餘誤差、跳動速率"""
+        res_data = np.array(self.history_data[tid]['residual'])
+        jump_data = np.array(self.history_data[tid]['jump'])
+        
+        # 只取前 target_n 筆數據，確保存出來的圖正是你設定的長度
+        res_plot = res_data[:self.target_n]
+        jump_plot = jump_data[:self.target_n]
+
+        fig_save, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        
+        # 左圖：Residual (剩餘誤差)
+        avg_res = np.mean(res_data)
+        std_res = np.std(res_data)
+        ax1.plot(res_data, color='blue', marker='o', markersize=3, alpha=0.5, linestyle='-', linewidth=0.5)
+        ax1.axhline(avg_res, color='red', linestyle='--', label=f'Avg: {avg_res:.4f} m')
+        ax1.set_title(f"Residual (Error) - Tag {tid}\nAvg={avg_res:.4f} m | Std={std_res:.4f} m | N={len(res_data)}")
+        ax1.set_ylabel("Error (m)")
+        ax1.set_xlabel("Sample Index")
+        ax1.grid(True, alpha=0.3)
+        ax1.legend()
+
+        # 右圖：Raw Jump (跳動速率/位移)
+        avg_jump = np.mean(jump_data)
+        std_jump = np.std(jump_data)
+        ax2.plot(jump_data, color='orange', marker='x', markersize=3, alpha=0.6, linestyle='-', linewidth=0.5)
+        ax2.axhline(avg_jump, color='red', linestyle='--', label=f'Avg: {avg_jump:.4f} m')
+        ax2.set_title(f"Raw Data Jump - Tag {tid}\nAvg={avg_jump:.4f} m | Std={std_jump:.4f} m | N={len(jump_data)}")
+        ax2.set_ylabel("Displacement (m)")
+        ax2.set_xlabel("Sample Index")
+        ax2.grid(True, alpha=0.3)
+        ax2.legend()
+        
+        plt.tight_layout()
+        fig_save.savefig(f"{self.status}_{tid}_N{self.target_n}_{time.strftime("%Y%m%d_%H%M%S")}-2.png")
+        plt.close(fig_save) 
+    
     def run(self):
         self.ani = FuncAnimation(self.fig, self.update, interval=20, blit=False)
         plt.tight_layout()

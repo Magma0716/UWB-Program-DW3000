@@ -15,10 +15,10 @@ const uint8_t ANCHOR_ADDR[] = { 'A', '4' };
 #define STS_ENCRYPTION false  // false, true
 
 // AES 加密 (for Payload distance)
-#define AES_ENCRYPTION false  // false, true
+#define AES_ENCRYPTION true  // false, true
 
 // Padding
-#define Padding 0
+#define Padding 47
 
 /* ================================ */
 /* ===== DW3000 Basic Config ====== */

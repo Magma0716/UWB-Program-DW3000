@@ -9,7 +9,7 @@
 /* ================================ */
 
 // Tag 強迫休息時間 (改小能讓輸出變快)
-#define RNG_DELAY_MS 10
+#define RNG_DELAY_MS 0
 
 // Anchor 數量
 #define NUM_ANCHORS 4
@@ -18,10 +18,10 @@
 #define STS_ENCRYPTION false  // false, true
 
 // AES 加密 (for Payload distance)
-#define AES_ENCRYPTION false  // false, true
+#define AES_ENCRYPTION true  // false, true
 
 // Padding
-#define Padding 0
+#define Padding 47
 
 // Nonce (IV)
 #define Random_Nonce_Byte 0
@@ -905,11 +905,11 @@ void loop() {
                 double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
                 double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
 
-                if (raw > 5.0 && STS_ENCRYPTION) raw -= STS_OFFSET; // STS mode 偏差 (11m) 
+                if (raw > 5.0 && STS_ENCRYPTION) distance -= STS_OFFSET; // STS mode 偏差 (11m) 
                 
                 Serial.printf(
                     "DATA, %3.2f, %3.2f\n",
-                    poll_time_us + resp_time_us, raw
+                    poll_time_us + resp_time_us, distance
                 );
                 
 
