@@ -3,13 +3,17 @@
 #include "dw3000.h"
 #include "dw3000_mac_802_15_4.h"
 #include "SPI.h"
+#include <PriUint64.h>
 
 /* ================================ */
 /* ========== 數據修改區 =========== */
 /* ================================ */
 
+// Tag 名稱
+const uint8_t TAG_ADDR[] = { 'T', '4' }; 
+
 // Tag 強迫休息時間 (改小能讓輸出變快)
-#define RNG_DELAY_MS 0
+#define RNG_DELAY_MS 10
 
 // Anchor 數量
 #define NUM_ANCHORS 4
@@ -18,10 +22,10 @@
 #define STS_ENCRYPTION false  // false, true
 
 // AES 加密 (for Payload distance)
-#define AES_ENCRYPTION true  // false, true
+#define AES_ENCRYPTION false  // false, true
 
 // Padding
-#define Padding 47
+#define Padding 0
 
 // Nonce (IV)
 #define Random_Nonce_Byte 0
@@ -33,6 +37,8 @@
 // position setting
 #define UDP_BROADCAST_INTERVAL 100  // Minimum interval between UDP broadcasts (ms)
 #define ANCHOR_DATA_TIMEOUT 5000   // Timeout for anchor data in milliseconds
+
+#define debug false
 
 /* ================================ */
 /* ===== DW3000 Basic Config ====== */
@@ -74,8 +80,7 @@
 
 #define STS_OFFSET 10.65  // STS mode 偏差
 
-const uint8_t PAN_ID[] = { 0xCA, 0xDE };     
-const uint8_t TAG_ADDR[] = { 'T', '1' };   
+const uint8_t PAN_ID[] = { 0x21, 0x43 };       
 
 extern dwt_txconfig_t txconfig_options;
 
@@ -313,9 +318,9 @@ static uint8_t rx_resp_msg[20 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1],
 static uint8_t rx_buffer[RX_BUF_LEN];
 
 /* Initiator data */
-#define DEST_ADDR       0x1122334455667788 /* this is the address of the responder */
-#define SRC_ADDR        0x8877665544332211 /* this is the address of the initiator */
-#define DEST_PAN_ID     0x4321             /* this is the PAN ID used in this example */
+uint64_t SRC_ADDR =     0x1122334455660000; /* this is the address of the initiator */
+uint64_t DEST_ADDR =    0x8877665544330000; /* this is the address of the responder */
+#define DEST_PAN_ID     0x4321              /* this is the PAN ID used in this example */
 
 /* Frame counter */
 static uint32_t frame_seq_nb = 0;
@@ -595,6 +600,13 @@ void setup() {
 
     /* AES */
     if(AES_ENCRYPTION){
+        
+        /* automatically change the SRC_ADDR */
+        SRC_ADDR = (SRC_ADDR & 0xFFFFFFFFFFFF0000) | 
+                   ((uint64_t)TAG_ADDR[0] << 8) | 
+                   (uint64_t)TAG_ADDR[1];
+        //Serial.println(PriUint64<HEX>(SRC_ADDR));
+
         /* Configure the TX spectrum parameters (power, PG delay and PG count) */
         dwt_configuretxrf(&txconfig_options);
 
@@ -662,22 +674,24 @@ void setup() {
 void loop() {
 
     // 取得目前要測距的 Anchor 名稱 (例如 'A', '1')
-    char targetID0 = ANCHOR_LIST[currentAnchorIndex][0];
-    char targetID1 = ANCHOR_LIST[currentAnchorIndex][1];
+    char AncID0 = ANCHOR_LIST[currentAnchorIndex][0];
+    char AncID1 = ANCHOR_LIST[currentAnchorIndex][1];
 
-    // 更新加密用的 MAC Frame 目的地 (影響 AES Nonce 與 Header)
-    // 這裡我們把目標 ID 填入 DEST_ADDR 的低位元組 (假設高位元組固定)
-    mac_frame.mhr_802_15_4.dest_addr[0] = targetID1; // '1'
-    mac_frame.mhr_802_15_4.dest_addr[1] = targetID0; // 'A'
+    DEST_ADDR = (DEST_ADDR & 0xFFFFFFFFFFFF0000) |
+                   ((uint64_t)AncID0 << 8) |
+                   (uint64_t) AncID1;
 
-    // 更新非加密模式用的 tx_poll_msg (如果 AES 沒開時會用到)
-    tx_poll_msg[7] = targetID0;
-    tx_poll_msg[8] = targetID1;
+    if(debug){
+        Serial.println(PriUint64<HEX>(DEST_ADDR));
+        Serial.println(PriUint64<HEX>(SRC_ADDR));
+    }
+
+    // 更新 tx_poll_msg (如果 AES 沒開時會用到)
+    // tx_poll_msg = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 0, 0, 0xE0, 0, 0};
+    // rx_resp_msg = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 0, 0, TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    tx_poll_msg[7] = AncID0; tx_poll_msg[8] = AncID1;
+    rx_resp_msg[5] = AncID0; rx_resp_msg[6] = AncID1;
     
-    // 更新預期接收的 ID (用於後續驗證)
-    rx_resp_msg[5] = targetID0;
-    rx_resp_msg[6] = targetID1;
-
     /* AES setting */
     if(AES_ENCRYPTION){
 
@@ -711,12 +725,12 @@ void loop() {
         if (status<0)
         {
             test_run_info((unsigned char *)"AES length error");
-            while (1);/* Error */
+            return;/* Error */
         }
         else if (status & AES_ERRORS)
         {
             test_run_info((unsigned char *)"ERROR AES");
-            while (1);/* Error */
+            return;/* Error */
         }
 
         /* configure the frame control and start transmission */
@@ -748,13 +762,14 @@ void loop() {
         dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
         //dwt_starttx(DWT_START_TX_DELAYED);
     }
-
+    
     while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {};
-
+    
     frame_seq_nb++;
 
     if (status_reg & SYS_STATUS_RXFCG_BIT_MASK) {
         uint32_t frame_len;
+        
         /* 解密 respone */
         if(AES_ENCRYPTION){
             /* Clear good RX frame event in the DW IC status register. */
@@ -762,7 +777,6 @@ void loop() {
 
             /* Read data length that was received */
             frame_len = dwt_read32bitreg(RX_FINFO_ID)&RXFLEN_MASK;
-
             /* A frame has been received: firstly need to read the MHR and check this frame is what we expect:
              * the destination address should match our source address (frame filtering can be configured for this check,
              * however that is not part of this example); then the header needs to have security enabled.
@@ -770,16 +784,23 @@ void loop() {
              * */
             aes_config.mode=AES_Decrypt;
             PAYLOAD_PTR_802_15_4(&mac_frame)=rx_buffer;/* Set the MAC pyload ptr */
-
+    
             /* This example assumes that initiator and responder are sending encrypted data */
             status=rx_aes_802_15_4(&mac_frame,frame_len,&aes_job_rx,sizeof(rx_buffer),keys_options,DEST_ADDR,SRC_ADDR,&aes_config);
-            if (status!=AES_RES_OK)
-            {
-              do {
+            // 收到不是給我的封包，或是解密失敗
+            if (status != AES_RES_OK) {
+                /*
+                // 清理狀態暫存器，準備下一輪接收
+                //cleanupInvalidAnchors();
+                currentAnchorIndex = (currentAnchorIndex + 1) % NUM_ANCHORS;
+                test_run_info((unsigned char *)"Frame not for us");
+                return; 
+                */
+                /* report any errors */
                 switch (status)
                 {
                     case AES_RES_ERROR_LENGTH:
-                        test_run_info((unsigned char *)"Length AES error");
+                        test_run_info((unsigned char *)"AES length error");
                         break;
                     case AES_RES_ERROR:
                         test_run_info((unsigned char *)"ERROR AES");
@@ -789,15 +810,16 @@ void loop() {
                         break;
                     case AES_RES_ERROR_IGNORE_FRAME:
                         test_run_info((unsigned char *)"Frame not for us");
-                        continue;//Got frame not for us
+                        return;//Got frame with wrong destination address
                 }
-              } while (1);
+                return;
             }
-
+            //Serial.println("a");
             /* Check that the frame is the expected response from the companion "SS TWR AES responder" example.
              * ignore the 8 first bytes of the response message as they contain the poll and response timestamps */
-            if (memcmp(&rx_buffer[START_RECEIVE_DATA_LOCATION], &rx_resp_msg[START_RECEIVE_DATA_LOCATION],
-                    aes_job_rx.payload_len-START_RECEIVE_DATA_LOCATION) == 0)
+            //if (memcmp(&rx_buffer[START_RECEIVE_DATA_LOCATION], &rx_resp_msg[START_RECEIVE_DATA_LOCATION],
+            //        aes_job_rx.payload_len-START_RECEIVE_DATA_LOCATION) == 0)
+            if (rx_buffer[9] == 0xE1)
             {
                 uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
                 int32_t rtd_init, rtd_resp;
@@ -823,6 +845,7 @@ void loop() {
 
                 tof = (((t2 - t1) - (t4 - t3) * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
                 distance = tof * SPEED_OF_LIGHT;
+                if(distance < 0) { distance = 0; }
                 double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
                 double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
                 /*
@@ -832,7 +855,7 @@ void loop() {
                 );
                 */
                 // 在 Serial.printf 之後加入：
-                char currentName[3] = { targetID0, targetID1, 0 };
+                char currentName[3] = { AncID0, AncID1, 0 };
                 updateAnchorData(currentName, distance, tof);
                 
                 // 移動到下一個 Anchor 並進行清理
@@ -877,14 +900,15 @@ void loop() {
 
                 double raw = (((t2 - t1) - (t4 - t3) * (1 - ratio)) / 2.0) * DWT_TIME_UNITS;
                 double distance = raw * SPEED_OF_LIGHT;
+                if(distance < 0) { distance = 0; }
 
                 char name[3] = { 0 };
                 memcpy(name, rx_buffer + 5, 2);
 
                 /* Display computed distance on LCD. */
                 char dist_str[32];
-                snprintf(dist_str, sizeof(dist_str), "A:%s, DIST: %3.2f m", name, distance);
-                test_run_info((unsigned char *)dist_str);
+                //snprintf(dist_str, sizeof(dist_str), "A:%s, DIST: %3.2f m", name, distance);
+                //test_run_info((unsigned char *)dist_str);
 
                 /* Update anchor data */
                 updateAnchorData(name, distance, raw);
@@ -906,12 +930,12 @@ void loop() {
                 double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
 
                 if (raw > 5.0 && STS_ENCRYPTION) distance -= STS_OFFSET; // STS mode 偏差 (11m) 
-                
+                /*
                 Serial.printf(
                     "DATA, %3.2f, %3.2f\n",
                     poll_time_us + resp_time_us, distance
                 );
-                
+                */
 
                 }
             //dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);

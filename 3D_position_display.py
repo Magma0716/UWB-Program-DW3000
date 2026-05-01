@@ -4,6 +4,8 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+import tkinter as tk
+from tkinter import messagebox
 
 # 3D EKF
 class UWB_EKF_3D:
@@ -55,11 +57,14 @@ class UWB_EKF_3D:
 class MultiTagSystem:
     def __init__(self):
         self.target_n = 1000
-        self.status = '加密47pad'
+        self.status = '加密_隨機IV(0)'
         
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(('192.168.0.108', 8001))
         self.sock.setblocking(False)
+        
+        self.root = tk.Tk()
+        self.root.withdraw()
         
         # 設置 4 個 Anchor 位置
         self.anchors = {
@@ -70,7 +75,7 @@ class MultiTagSystem:
         }
         
         # 初始化多個 Tag 的 EKF 與 軌跡
-        self.tags = {'T1': '#4CAF50', 'T2': '#2E7D32', 'T3': '#E91E63'}
+        self.tags = {'T1': '#4CAF50', 'T2': "#3BD1DB", 'T3': '#E91E63', 'T4': "#BE5DFF"}
         self.ekfs = {tid: UWB_EKF_3D() for tid in self.tags}
         self.trails = {tid: ([], [], []) for tid in self.tags}
         self.raw_history = {tid: [] for tid in self.tags}
@@ -125,6 +130,7 @@ class MultiTagSystem:
             # 3D
             ln3d, = self.ax3d.plot([], [], [], color=color, alpha=0.3)
             pt3d, = self.ax3d.plot([], [], [], color=color, marker='o', markersize=8)
+            cloud3d, = self.ax3d.plot([], [], [], 'kx', markersize=4, alpha=0.2)
             
             ## raw data
             # 2D
@@ -135,7 +141,8 @@ class MultiTagSystem:
             # for update 
             self.plot_objs[tid] = {
                 'pt2d': pt2d, 'ln2d': ln2d, 'cloud2d': cloud2d, 'status2d': status2d,
-                'pt3d': pt3d, 'ln3d': ln3d, 'raw2d': raw2d, 'raw3d': raw3d
+                'pt3d': pt3d, 'ln3d': ln3d, 'cloud3d': cloud3d, 'raw2d': raw2d, 'raw3d': raw3d,
+                'color': color
             }
             
         #self.ax2d.legend(loc='upper right', fontsize='small')
@@ -221,14 +228,20 @@ class MultiTagSystem:
                     
                     ## 更新畫面
                     objs = self.plot_objs[tid]
+                    tag_color = objs['color']
+                    
                     objs['raw2d'].set_data([raw_xyz[0]], [raw_xyz[1]])
+                    objs['raw2d'].set_color(tag_color)
+                    
                     objs['raw3d'].set_data_3d([raw_xyz[0]], [raw_xyz[1]], [raw_xyz[2]])
+                    objs['raw3d'].set_color(tag_color)
                     N = len(np.array(self.history_data['T1']['residual']))
                     print(N)
                     
                     # 軌跡雲
                     raw_pts = np.array(self.raw_history[tid])
                     objs['cloud2d'].set_data(raw_pts[:, 0], raw_pts[:, 1])
+                    objs['cloud3d'].set_data_3d(raw_pts[:, 0], raw_pts[:, 1], raw_pts[:, 2])
                     
                     # 文字資訊
                     '''
@@ -242,6 +255,7 @@ class MultiTagSystem:
                     for tid in self.tags:
                         current_n = len(self.history_data[tid]['residual'])
                         if current_n >= self.target_n and not self.has_saved[tid]:
+                            messagebox.showwarning("警告", "這是一個警告訊息！")
                             self.save_all_plots(tid, current_n)
                             self.has_saved[tid] = True
                     
