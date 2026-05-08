@@ -10,25 +10,26 @@
 /* ================================ */
 
 // Tag 名稱
-const uint8_t TAG_ADDR[] = { 'T', '4' }; 
+const uint8_t TAG_ADDR[] = { 'T', '1' }; 
+int totalTags = 1;
 
 // Tag 強迫休息時間 (改小能讓輸出變快)
-#define RNG_DELAY_MS 10
+#define RNG_DELAY_MS 0
 
 // Anchor 數量
-#define NUM_ANCHORS 4
+#define NUM_ANCHORS 1
 
 // STS 加密 (for PHR ms)
 #define STS_ENCRYPTION false  // false, true
 
 // AES 加密 (for Payload distance)
-#define AES_ENCRYPTION false  // false, true
+#define AES_ENCRYPTION true  // false, true
 
 // Padding
 #define Padding 0
 
 // Nonce (IV)
-#define Random_Nonce_Byte 0
+#define Random_Nonce_Byte 2
 
 // Wifi
 #define tmp_ssid "Alan6711"
@@ -671,7 +672,16 @@ void setup() {
 /* ============= Loop ============= */
 /* ================================ */
 
+// 每個tag預留的窗口時間
+unsigned long slotDuration = 100;
+int myTagID = (int)TAG_ADDR[1] - '0';
+
 void loop() {
+
+    unsigned long currentMillis = millis();
+    unsigned long cycleTime = currentMillis % (slotDuration * totalTags);
+
+    if (cycleTime >= (myTagID - 1) * slotDuration && cycleTime < myTagID * slotDuration) {
 
     // 取得目前要測距的 Anchor 名稱 (例如 'A', '1')
     char AncID0 = ANCHOR_LIST[currentAnchorIndex][0];
@@ -856,7 +866,7 @@ void loop() {
                 */
                 // 在 Serial.printf 之後加入：
                 char currentName[3] = { AncID0, AncID1, 0 };
-                updateAnchorData(currentName, distance, tof);
+                updateAnchorData(currentName, distance, poll_time_us + resp_time_us); // - - tof
                 
                 // 移動到下一個 Anchor 並進行清理
                 cleanupInvalidAnchors();
@@ -902,6 +912,11 @@ void loop() {
                 double distance = raw * SPEED_OF_LIGHT;
                 if(distance < 0) { distance = 0; }
 
+                double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
+                double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
+
+                if (raw > 5.0 && STS_ENCRYPTION) distance -= STS_OFFSET; // STS mode 偏差 (11m) 
+
                 char name[3] = { 0 };
                 memcpy(name, rx_buffer + 5, 2);
 
@@ -911,7 +926,7 @@ void loop() {
                 //test_run_info((unsigned char *)dist_str);
 
                 /* Update anchor data */
-                updateAnchorData(name, distance, raw);
+                updateAnchorData(name, distance, poll_time_us + resp_time_us); // - - raw
 
                 /* Clean up invalid anchors */
                 cleanupInvalidAnchors();
@@ -926,10 +941,7 @@ void loop() {
                     #endif
                 }
 
-                double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
-                double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
-
-                if (raw > 5.0 && STS_ENCRYPTION) distance -= STS_OFFSET; // STS mode 偏差 (11m) 
+                
                 /*
                 Serial.printf(
                     "DATA, %3.2f, %3.2f\n",
@@ -949,4 +961,7 @@ void loop() {
     }
     currentAnchorIndex = (currentAnchorIndex + 1) % NUM_ANCHORS;
     delay(RNG_DELAY_MS);
+
+    }
+    
 }

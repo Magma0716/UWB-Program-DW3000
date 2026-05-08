@@ -10,13 +10,13 @@
 /* ================================ */
 
 // Anchor 名稱 (e.g. A1, A2, A3...)
-const uint8_t ANCHOR_ADDR[] = { 'A', '3' };  
+const uint8_t ANCHOR_ADDR[] = { 'A', '1' };  
 
 // STS 加密 (for PHR ms)
 #define STS_ENCRYPTION false  // false, true
 
 // AES 加密 (for Payload distance)
-#define AES_ENCRYPTION false  // false, true
+#define AES_ENCRYPTION true  // false, true
 
 // Padding
 #define Padding 0

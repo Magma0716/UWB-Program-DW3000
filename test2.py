@@ -13,10 +13,10 @@ from matplotlib.widgets import Button
 # ================================
 CONFIG = {
     "ENABLE_STATS_EXPORT": True,    # 是否計算並輸出 Residual/Jump 圖表與存檔
-    "SHOW_CLOUD_POINTS": True,     # 初始狀態：歷史路徑雲 ('x' 點)
-    "SHOW_RAW_POINTS": True,       # 初始狀態：當前原始測量點 (Raw Data)
+    "SHOW_CLOUD_POINTS": True,      # 初始狀態：歷史路徑雲 ('x' 點)
+    "SHOW_RAW_POINTS": True,        # 初始狀態：當前原始測量點 (Raw Data)
     "SHOW_PREDICT_POINTS": False,   # 初始狀態：EKF 預測後的點與連線
-    "TARGET_SAMPLES": 4000,        # 達到多少樣本後自動存檔
+    "TARGET_SAMPLES": 1000,         # 達到多少樣本後自動存檔
 }
 
 class UWB_EKF_3D:
@@ -55,7 +55,7 @@ class UWB_EKF_3D:
 class MultiTagSystem:
     def __init__(self):
         self.target_n = CONFIG["TARGET_SAMPLES"]
-        self.status = '未加密'
+        self.status = 'AES加密'
         
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(('192.168.0.108', 8001))
@@ -68,7 +68,7 @@ class MultiTagSystem:
         self.ekfs = {tid: UWB_EKF_3D() for tid in self.tags}
         self.trails = {tid: ([], [], []) for tid in self.tags}
         self.raw_history = {tid: [] for tid in self.tags}
-        self.history_data = {tid: {'residual': [], 'jump': []} for tid in self.tags}
+        self.history_data = {tid: {'residual': [], 'jump': [], 'tof': []} for tid in self.tags}
         self.has_saved = {tid: False for tid in self.tags}
         
         # 控制變數
@@ -185,8 +185,13 @@ class MultiTagSystem:
                 msg = json.loads(data.decode())
                 tid = msg.get('tag')
                 if tid not in self.ekfs: continue
-                #print('tag:' + tid)
+                
+                
                 dists = {a['id']: a['distance'] for a in msg['anchors']}
+                
+                tof_list = [a['tof'] for a in msg['anchors'] if 'tof' in a]
+                avg_tof = np.mean(tof_list) if tof_list else 0
+                
                 self.ekfs[tid].predict()
                 raw_xyz = self.trilateration_3d(dists)
                 self.ekfs[tid].update(dists, self.anchors)
@@ -201,6 +206,7 @@ class MultiTagSystem:
                         raw_vel = np.linalg.norm(raw_xyz - self.raw_history[tid][-1]) if self.raw_history[tid] else 0
                         self.history_data[tid]['residual'].append(self.calculate_residual(raw_xyz, dists))
                         self.history_data[tid]['jump'].append(raw_vel)
+                        self.history_data[tid]['tof'].append(avg_tof)
                     
                     self.raw_history[tid].append(raw_xyz)
                     objs = self.plot_objs[tid]
@@ -231,8 +237,9 @@ class MultiTagSystem:
         
         res_plot = np.array(self.history_data[tid]['residual'][:self.target_n])
         jump_plot = np.array(self.history_data[tid]['jump'][:self.target_n])
+        tof_plot = np.array(self.history_data[tid]['tof'][:self.target_n])
         
-        fig_stat, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        fig_stat, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(16, 6))
         
         # 左圖：Residual (剩餘誤差)
         avg_res = np.mean(res_plot)
@@ -245,10 +252,10 @@ class MultiTagSystem:
         ax1.grid(True, alpha=0.3)
         ax1.legend()
 
-        # 右圖：Raw Jump (跳動速率/位移)
+        # 中圖：Raw Jump (跳動速率/位移)
         avg_jump = np.mean(jump_plot)
         std_jump = np.std(jump_plot)
-        ax2.plot(jump_plot, color='orange', marker='x', markersize=3, alpha=0.6, linestyle='-', linewidth=0.5)
+        ax2.plot(jump_plot, color='green', marker='x', markersize=3, alpha=0.6, linestyle='-', linewidth=0.5)
         ax2.axhline(avg_jump, color='red', linestyle='--', label=f'Avg: {avg_jump:.4f} m')
         ax2.set_title(f"Raw Data Jump - Tag {tid}\nAvg={avg_jump:.4f} m | Std={std_jump:.4f} m | N={len(jump_plot)}")
         ax2.set_ylabel("Displacement (m)")
@@ -256,8 +263,17 @@ class MultiTagSystem:
         ax2.grid(True, alpha=0.3)
         ax2.legend()
         
+        # 右圖：ms
+        # right chart
+        avg_tof = np.mean(tof_plot); std_tof = np.std(tof_plot)
+        ax3.plot(tof_plot, color='orange', marker='x', markersize=3, alpha=0.8, linewidth=0.5)
+        ax3.axhline(avg_tof, color='red', linestyle='--', label=f'Avg: {avg_tof:.1f} ns')
+        ax3.set_title(f"Time of Flight Delay - Tag {tid}\nAvg={avg_tof:.2f} ns | Std={std_tof:.2f} ns | N={len(tof_plot)}")
+        ax3.set_ylabel("TOF (ns)"); ax3.set_xlabel("Sample Index")
+        ax3.grid(True, which='both', linestyle='-', alpha=0.2); ax3.legend(loc='upper right')
+        
         plt.tight_layout(); 
-        fig_stat.savefig(f"{self.status}_{tid}_N{self.target_n}_{timestamp}_Stats.png"); 
+        fig_stat.savefig(f"{self.status}_{tid}_N{self.target_n}_{timestamp}_Stats.png", dpi=300); 
         plt.close(fig_stat)
 
     def on_close(self, event): plt.show()
