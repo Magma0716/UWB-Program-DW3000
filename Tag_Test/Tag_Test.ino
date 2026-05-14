@@ -31,7 +31,7 @@ int totalTags = 1;
 #define Padding 0
 
 // Nonce (IV)
-#define Random_Nonce_Byte 1
+#define Random_Nonce_Byte 2
 
 // Wifi
 #define tmp_ssid "Alan6711"
@@ -353,30 +353,16 @@ static bool isExpectedFrame(const uint8_t *frame, const uint32_t len) {
     return true;
 }
 
-void crypto_load(int padding) {
-    if (padding <= 0) return;
-    
-    int base_delay = padding * 50000; // 基礎延遲隨 Padding 線性增加
-    int jitter = random(0, padding * 500); // 隨機抖動也隨 Padding 增加
-    
-    volatile uint32_t count = base_delay + jitter;
-    while(count--) { __asm__("nop"); }
-}
-
 
 /* ================================ */
 /* ======= Non-Repeating IV ======= */
 /* ================================ */
 
 // vector IV storage 
-/*
-1 Byte - 256
-2 Byte - 55290
-*/
-#define MAX_IV 256
+#define MAX_IV 65536
 #define MAX_COLLISION 500
 
-static uint16_t* iv_history = nullptr;
+static std::bitset<65536> iv_history;
 static uint32_t iv_history_count = 0;
 
 static uint16_t collision_history[MAX_COLLISION];
@@ -403,10 +389,17 @@ bool set_unique_random_iv() {
         }
 
         // 檢查重複 O(N)
-        auto it = std::find(iv_history, iv_history + iv_history_count, (uint16_t)iv);
+        bool is_duplicate = false;
+        for (volatile uint32_t i = 0; i < 65536; i++) {
+            if (iv_history.test(i)) {
+                if (i == iv) {
+                    is_duplicate = true;
+                }
+            }
+        }
 
         // 找到重複
-        if (it != (iv_history + iv_history_count)) {
+        if (is_duplicate) {
             
             // 紀錄重複
             if (collision_count < MAX_COLLISION) {
@@ -419,7 +412,7 @@ bool set_unique_random_iv() {
         else {
             
             // 紀錄iv
-            iv_history[iv_history_count] = (uint16_t)iv;
+            iv_history.set(iv);
             iv_history_count++;
             found = true;
 
@@ -465,14 +458,15 @@ bool set_unique_random_iv() {
             // 紀錄超過
             if (iv_history_count >= MAX_IV) {
                 iv_history_count = 0;
-                memset(iv_history, 0, sizeof(iv_history)); // 清空
+                iv_history.reset(); // 清空
                 
             }
         }
         
         // 防呆
         if (iv_history_count >= 65536) { 
-            memset(iv_history, 0, sizeof(iv_history)); // 清空
+            iv_history_count = 0;
+            iv_history.reset(); // 清空
             break; 
         }
     }
@@ -634,12 +628,6 @@ void broadcastUDP(const char* jsonData) {
 /* ================================ */
 
 void setup() {
-    
-    // heap
-    iv_history = new uint16_t[MAX_IV];
-
-
-
     Serial.begin(115200);
 
     #ifdef ENABLE_WIFI
@@ -831,9 +819,6 @@ void loop() {
         /* configure the frame control and start transmission */
         dwt_writetxfctrl(aes_job_tx.header_len + aes_job_tx.payload_len + aes_job_tx.mic_size + FCS_LEN, 0, 1); /* Zero offset in TX buffer, ranging. */
 
-        /* slow */
-        //crypto_load(Padding);
-
         /* Start transmission, indicating that a response is expected so that reception is enabled automatically after the frame is sent and the delay
          * set by dwt_setrxaftertxdelay() has elapsed. */
         dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
@@ -937,11 +922,11 @@ void loop() {
                 // rtd_init = resp_rx_ts - poll_tx_ts;
                 // rtd_resp = resp_tx_ts - poll_rx_ts;
 
-                double ppm_jitter = (double)random(-2, 2) / 1e6; 
-                double indirect_tof_error = ((double)searchTime / 1e6 * ppm_jitter);
+                double ppm_jitter = (double)random(-5, 5) / 1e6; 
+                double indirect_tof_error = ((double)searchTime / 1e6) * ppm_jitter;
 
                 tof = (((t2 - t1) - (t4 - t3) * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
-                distance = (tof + indirect_tof_error) * SPEED_OF_LIGHT;
+                distance = (tof + + indirect_tof_error) * SPEED_OF_LIGHT; //+ e_bias;
                 if(distance < 0) { distance = 0; }
                 double poll_time_ns = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
                 double resp_time_ns = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;

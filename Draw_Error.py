@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 import json
 import os
+import re
 
 '''
 seq: rounded delay
@@ -16,9 +17,9 @@ pad_inferred_from_data: padding
 # connect
 PORT = 'COM10'
 BAUD_RATE = 115200
-DATA_LIMIT = 4000 # 資料筆數
+DATA_LIMIT = 70000 # 資料筆數
 padding = '0'
-encryption = 'AES_' #  non-, STS_, AES_, AES+STS_
+encryption = 'AES_1IV' #  non-, STS_, AES_, AES+STS_
 
 # Json
 JSON_FILE = 'AES_RandomIV_Results.json'
@@ -57,7 +58,7 @@ if encryption == 'STS_':
     except KeyboardInterrupt:
         print("\n按下 ctrl + C 開始讀取")
 
-for set_idx in range(1,20+1):
+for set_idx in range(1):
     data = []    
     count = 1
     packageLoss = 0
@@ -65,10 +66,10 @@ for set_idx in range(1,20+1):
         if ser.in_waiting > 0:
             line = ser.readline().decode('utf-8', errors='ignore').strip()
             
-            if line:
+            '''if line:
                 arr = line.split(',')
                 print(f'{count} -> {arr}')
-                if len(arr) == 3 and arr[0] == 'DATA' and (float(arr[2]) > 0.5 and float(arr[2]) < 2):
+                if len(arr) == 3 and arr[0] == 'DATA':#and (float(arr[2]) > 0.5 and float(arr[2]) < 2):
                     try:
                         data.append({
                             'dis': float(arr[2]),
@@ -81,8 +82,45 @@ for set_idx in range(1,20+1):
                         count += 1
                     except:
                         print('can\'t received')
-                        continue
-     
+                        continue'''
+            if line:
+                try:
+                    # 1. 處理那種 ['{...}', '{...}'] 的怪異格式
+                    # 先找到第一個 '{' 和最後一個 '}'
+                    start_idx = line.find('{')
+                    end_idx = line.rfind('}')
+                    
+                    if start_idx != -1 and end_idx != -1:
+                        json_str = line[start_idx : end_idx + 1]
+                        
+                        json_str = json_str.replace('"', '"').replace("'", '"')
+                        
+                        parsed_json = json.loads(json_str)
+                        
+                        # 3. 提取數據 (針對你的格式: anchors 是一個 list)
+                        if 'anchors' in parsed_json and len(parsed_json['anchors']) > 0:
+                            anchor = parsed_json['anchors'][0] # 取得第一個 Anchor
+                            dist_val = float(anchor['distance'])
+                            tof_val = float(anchor['tof'])
+                            
+                            if count % 10 == 0:
+                                print(f'{count} -> Dist: {dist_val}, TOF: {tof_val}')
+                            
+                            data.append({
+                                'dis': dist_val,
+                                'ms':  tof_val
+                            })
+                            
+                            # 原本的 packageLoss 邏輯 (判斷 TOF 是否異常)
+                            if tof_val / 1000 > 150:
+                                packageLoss += 1
+                            
+                            count += 1
+                except Exception as e:
+                    # 如果解析失敗，印出錯誤原因以便除錯
+                    # print(f"Parse Error at line: {line} | Error: {e}")
+                    continue
+                
     # read data
     #df = pd.read_csv(r'.\Encryption_YP\UWB_Reports\範例_UWB_Result_ENC_ON_IV_UNK_PAD0_20260115-213740.csv')
     df = pd.DataFrame(data)
@@ -121,7 +159,7 @@ for set_idx in range(1,20+1):
     ax1.set_xlabel(f"Sample Index | padding={padding}")
     ax1.grid(True, which='both', linestyle='-', alpha=0.2)
     ax1.legend(loc='upper right')
-
+    
     # right chart
     ax2.plot(
         df.index, intv, 
