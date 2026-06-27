@@ -1,0 +1,10 @@
+socket
+json
+numpy
+pandas
+matplotlib
+typing
+cmath
+tkinter
+serial
+seaborn

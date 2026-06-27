@@ -55,16 +55,16 @@ class UWB_EKF_3D:
 class MultiTagSystem:
     def __init__(self):
         self.target_n = CONFIG["TARGET_SAMPLES"]
-        self.status = 'AES加密'
+        self.status = '未加密'
         
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(('192.168.0.108', 8001))
+        self.sock.bind(('192.168.0.105', 8001))
         self.sock.setblocking(False)
         
         self.root = tk.Tk(); self.root.withdraw()
         
         self.anchors = {'A1': (0.0, 0.0, 0.0), 'A2': (2.0, 0.0, 0.0), 'A3': (1.0, 1.732, 0.0), 'A4': (1.0, 0.0, 0.4)} #'A4': (1.0, 0.577, 1.633)
-        self.tags = {'T1': '#4CAF50', 'T2': "#3BD1DB", 'T3': '#E91E63', 'T4': "#BE5DFF"}
+        self.tags = {'T1': "#000000", 'T2': "#3BD1DB", 'T3': '#E91E63', 'T4': "#BE5DFF"} #'T1': '#4CAF50'
         self.ekfs = {tid: UWB_EKF_3D() for tid in self.tags}
         self.trails = {tid: ([], [], []) for tid in self.tags}
         self.raw_history = {tid: [] for tid in self.tags}
@@ -246,18 +246,19 @@ class MultiTagSystem:
         std_res = np.std(res_plot)
         ax1.plot(res_plot, color='blue', marker='o', markersize=3, alpha=0.5, linestyle='-', linewidth=0.5)
         ax1.axhline(avg_res, color='red', linestyle='--', label=f'Avg: {avg_res:.4f} m')
-        ax1.set_title(f"Residual (Error) - Tag {tid}\nAvg={avg_res:.4f} m | Std={std_res:.4f} m | N={len(res_plot)}")
-        ax1.set_ylabel("Error (m)")
+        ax1.set_title(f"Residual - Tag {tid}\nAvg={avg_res:.4f} m | Std={std_res:.4f} m | N={len(res_plot)}")
+        ax1.set_ylabel("Positioning Residual (m)")
         ax1.set_xlabel("Sample Index")
         ax1.grid(True, alpha=0.3)
         ax1.legend()
-
+        
+        
         # 中圖：Raw Jump (跳動速率/位移)
         avg_jump = np.mean(jump_plot)
         std_jump = np.std(jump_plot)
         ax2.plot(jump_plot, color='green', marker='x', markersize=3, alpha=0.6, linestyle='-', linewidth=0.5)
         ax2.axhline(avg_jump, color='red', linestyle='--', label=f'Avg: {avg_jump:.4f} m')
-        ax2.set_title(f"Raw Data Jump - Tag {tid}\nAvg={avg_jump:.4f} m | Std={std_jump:.4f} m | N={len(jump_plot)}")
+        ax2.set_title(f"Jitter - Tag {tid}\nAvg={avg_jump:.4f} m | Std={std_jump:.4f} m | N={len(jump_plot)}")
         ax2.set_ylabel("Displacement (m)")
         ax2.set_xlabel("Sample Index")
         ax2.grid(True, alpha=0.3)
@@ -268,8 +269,8 @@ class MultiTagSystem:
         avg_tof = np.mean(tof_plot); std_tof = np.std(tof_plot)
         ax3.plot(tof_plot, color='orange', marker='x', markersize=3, alpha=0.8, linewidth=0.5)
         ax3.axhline(avg_tof, color='red', linestyle='--', label=f'Avg: {avg_tof:.1f} ns')
-        ax3.set_title(f"Time of Flight Delay - Tag {tid}\nAvg={avg_tof:.2f} ns | Std={std_tof:.2f} ns | N={len(tof_plot)}")
-        ax3.set_ylabel("TOF (ns)"); ax3.set_xlabel("Sample Index")
+        ax3.set_title(f"Latency - Tag {tid}\nAvg={avg_tof:.2f} ns | Std={std_tof:.2f} ns | N={len(tof_plot)}")
+        ax3.set_ylabel("Transmission Latency (ns)"); ax3.set_xlabel("Sample Index")
         ax3.grid(True, which='both', linestyle='-', alpha=0.2); ax3.legend(loc='upper right')
         
         plt.tight_layout(); 

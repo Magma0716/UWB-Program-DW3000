@@ -11,15 +11,17 @@
 /* ========== 數據修改區 =========== */
 /* ================================ */
 
-// Tag 名稱
-const uint8_t TAG_ADDR[] = { 'T', '1' }; 
+// Tag 數量
 int totalTags = 1;
-
-// Tag 強迫休息時間 (改小能讓輸出變快)
-#define RNG_DELAY_MS 0
 
 // Anchor 數量
 #define NUM_ANCHORS 1
+
+// Tag 名稱
+const uint8_t TAG_ADDR[] = { 'T', '1' }; 
+
+// Tag 強迫休息時間 (改小能讓輸出變快)
+#define RNG_DELAY_MS 0
 
 // STS 加密 (for PHR ms)
 #define STS_ENCRYPTION false  // false, true
@@ -31,17 +33,22 @@ int totalTags = 1;
 #define Padding 0
 
 // Nonce (IV)
-#define Random_Nonce_Byte 1
+#define Random_Nonce_Byte 0
 
 // Wifi
-#define tmp_ssid "Alan6711"
-#define tmp_password "bbb520111"
+#define tmp_ssid "PASSWORD"
+#define tmp_password "PASSWORD"
 
 // position setting
 #define UDP_BROADCAST_INTERVAL 100  // Minimum interval between UDP broadcasts (ms)
 #define ANCHOR_DATA_TIMEOUT 5000   // Timeout for anchor data in milliseconds
 
 #define debug false
+
+// 每個tag預留的窗口時間
+unsigned long slotDuration = 30;
+int myTagID = (int)TAG_ADDR[1] - '0';
+#define window_mode false
 
 /* ================================ */
 /* ===== DW3000 Basic Config ====== */
@@ -163,7 +170,7 @@ static int currentAnchorIndex = 0;
 /* ============= Wifi ============= */
 /* ================================ */
 
-//#define ENABLE_WIFI
+#define ENABLE_WIFI
 
 #ifdef ENABLE_WIFI
     #include <WiFi.h>
@@ -373,7 +380,7 @@ void crypto_load(int padding) {
 1 Byte - 256
 2 Byte - 55290
 */
-#define MAX_IV 256
+#define MAX_IV 55290
 #define MAX_COLLISION 500
 
 static uint16_t* iv_history = nullptr;
@@ -757,16 +764,12 @@ void setup() {
 /* ============= Loop ============= */
 /* ================================ */
 
-// 每個tag預留的窗口時間
-unsigned long slotDuration = 100;
-int myTagID = (int)TAG_ADDR[1] - '0';
-
 void loop() {
 
     unsigned long currentMillis = millis();
     unsigned long cycleTime = currentMillis % (slotDuration * totalTags);
 
-    if (cycleTime >= (myTagID - 1) * slotDuration && cycleTime < myTagID * slotDuration && AES_ENCRYPTION) {
+    if ((cycleTime >= (myTagID - 1) * slotDuration && cycleTime < myTagID * slotDuration) || window_mode) {
 
     // 取得目前要測距的 Anchor 名稱 (例如 'A', '1')
     char AncID0 = ANCHOR_LIST[currentAnchorIndex][0];
@@ -794,10 +797,10 @@ void loop() {
         // 生成不重複隨機 IV 並填入
         if(Random_Nonce_Byte != 0){    
             set_unique_random_iv();
-        }
-        Serial.printf("TEST_RESEARCH, Current_IV_Size: %d, Search_Delay_us: %u\n", 
+            Serial.printf("TEST_RESEARCH, Current_IV_Size: %d, Search_Delay_us: %u\n", 
                       iv_history_count, searchTime);
-
+        }
+        
         /* Program the correct key to be used */
         dwt_set_keyreg_128(&keys_options[INITIATOR_KEY_INDEX-1]);
         /* Set the key index for the frame */
@@ -938,7 +941,7 @@ void loop() {
                 // rtd_resp = resp_tx_ts - poll_rx_ts;
 
                 double ppm_jitter = (double)random(-2, 2) / 1e6; 
-                double indirect_tof_error = ((double)searchTime / 1e6 * ppm_jitter);
+                double indirect_tof_error = 0;//((double)searchTime / 1e6 * ppm_jitter);
 
                 tof = (((t2 - t1) - (t4 - t3) * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
                 distance = (tof + indirect_tof_error) * SPEED_OF_LIGHT;
@@ -953,7 +956,7 @@ void loop() {
                 */
                 // 在 Serial.printf 之後加入：
                 char currentName[3] = { AncID0, AncID1, 0 };
-                updateAnchorData(currentName, distance, searchTime*1000 + poll_time_ns + resp_time_ns); // - - tof
+                updateAnchorData(currentName, distance, poll_time_ns + resp_time_ns);//+ searchTime*1000); // - - tof
                 
                 // 移動到下一個 Anchor 並進行清理
                 cleanupInvalidAnchors();

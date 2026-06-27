@@ -6,7 +6,7 @@ import json
 with open('AES_RandomIV_Results.json','r') as file:
     data = json.load(file)
 
-# --- 原始資料 (保持不變) ---
+# --- 原始資料 ---
 ms_raw = {int(k): v for k, v in data['ms_raw'].items()}
 dis_raw = {int(k): v for k, v in data['dis_raw'].items()}
 

@@ -17,9 +17,9 @@ pad_inferred_from_data: padding
 # connect
 PORT = 'COM10'
 BAUD_RATE = 115200
-DATA_LIMIT = 70000 # 資料筆數
+DATA_LIMIT = 150000 # 資料筆數
 padding = '0'
-encryption = 'AES_1IV' #  non-, STS_, AES_, AES+STS_
+encryption = 'AES_' #  non-, STS_, AES_, AES+STS_
 
 # Json
 JSON_FILE = 'AES_RandomIV_Results.json'
@@ -156,7 +156,8 @@ for set_idx in range(1):
 
     ax1.set_title(f"Distance\nAvg={distAvg:.4f} m | Std={distStd:.4f} m | N={len(df)}")
     ax1.set_ylabel("Measured Distance (m)")
-    ax1.set_xlabel(f"Sample Index | padding={padding}")
+    ax1.set_xlabel(f"Sample Sequence Number")
+    ax1.set_xticks([0, 25000, 50000, 75000, 100000, 125000, 150000])
     ax1.grid(True, which='both', linestyle='-', alpha=0.2)
     ax1.legend(loc='upper right')
     
@@ -170,9 +171,10 @@ for set_idx in range(1):
         color='red', linestyle='--', label=f'Avg: {intvAvg:.1f} ns'
     )
 
-    ax2.set_title(f"System Load / Inter-arrival Time\nAvg={intvAvg:.4f} ns | Std={intvStd:.4f} ns | N={len(df)}")
-    ax2.set_ylabel("Inter-arrival Time (ns)")
-    ax2.set_xlabel(f"Sample Index | padding={padding}")
+    ax2.set_title(f"Latency\nAvg={intvAvg:.4f} ns | Std={intvStd:.4f} ns | N={len(df)}")
+    ax2.set_ylabel("Transmission Latency (ns)")
+    ax2.set_xlabel(f"Sample Sequence Number")
+    ax2.set_xticks([0, 25000, 50000, 75000, 100000, 125000, 150000])
     ax2.grid(True, which='both', linestyle='-', alpha=0.2)
     ax2.legend(loc='upper right')
 

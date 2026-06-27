@@ -60,7 +60,7 @@ class MultiTagSystem:
         self.status = '加密_隨機IV(0)'
         
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(('192.168.0.108', 8001))
+        self.sock.bind(('192.168.0.105', 8001))
         self.sock.setblocking(False)
         
         self.root = tk.Tk()
