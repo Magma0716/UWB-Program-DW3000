@@ -7,7 +7,7 @@
 ```
 Arduino 內的設定為：
 
-![board_setting](Draw_Error_Images\markdown_image\板子設定.png)
+![board_setting](Draw_Error_Images/markdown_image/板子設定.png)
 
 
 
