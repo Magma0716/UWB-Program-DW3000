@@ -143,21 +143,21 @@ data =
 section = 0
 choose = 0
 ```
-![non-encryption](.\Draw_Error_Images\markdown_image\未加密.png)
+![non-encryption](Draw_Error_Images/markdown_image/未加密.png)
 
 
 ```py
 section = 0
 choose = 1
 ```
-![encryption](.\Draw_Error_Images\markdown_image\AES加密.png)
+![encryption](Draw_Error_Images/markdown_image/AES加密.png)
 
 
 ```py
 section = 1
 # choose = X
 ```
-![both](.\Draw_Error_Images\markdown_image\未加密_AES加密.png)
+![both](Draw_Error_Images/markdown_image/未加密_AES加密.png)
 
 
 
@@ -168,13 +168,13 @@ section = 1
 # 是否加入Tag?
 Add_Tag = False 
 ```
-![no Tag](.\Draw_Error_Images\markdown_image\3D_Layout.png)
+![no Tag](Draw_Error_Images/markdown_image/3D_Layout.png)
 
 ```py
 # 是否加入Tag?
 Add_Tag = True 
 ```
-![Tag](.\Draw_Error_Images\markdown_image\3D_Layout_with_1tag.png)
+![Tag](Draw_Error_Images/markdown_image/3D_Layout_with_1tag.png)
 
 
 ---
