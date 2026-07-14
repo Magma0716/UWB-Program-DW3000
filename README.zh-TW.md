@@ -31,7 +31,7 @@
 | **數值** | `41 88` | `00` | `CA DE` | `41 31` | `54 31` | `E1` | `59 1A 57 05` | `01 5A 26 09` | `85 2D` |
 | **說明** | MAC標頭 | 封包序號 | 網路ID | 標籤短網址 | 基站短網址 | 功能碼(Respone) | 接收時間戳($T_2$) | 發射時間戳($T_3$) | 錯誤校驗碼 |
 
-* 封包格式 (AES-CCM未加密)
+* **封包格式 (AES-CCM未加密)**
 
 `Poll 封包`
 | 欄位 | FCF | Seq Num | Pan ID | Dst_Adr | Src_Adr | Security Control | Frame Counter | Key Index | Payload | MIC | CRC |
@@ -42,7 +42,7 @@
 
 ---
 
-## 📁 檔案結構樹
+## 🌳 檔案結構樹
 ```bash
 📂 UWB_Program_DW3000
 ┣ 📂 PriUint64  # uint_64 變數印出函式庫 (debug 用)
@@ -102,9 +102,10 @@
 
 安裝 USB 驅動程式：https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers?tab=downloads
 
-> 根據電腦環境不同，可分為下列兩種作業軟體
-> (Windows) `CP210x Universal Windows Driver`
-> (Mac) `CP210x VCP Mac OSX Driver`
+> 根據電腦環境不同，可分為下列兩種作業軟體安裝 <br>
+> (Windows) `CP210x Universal Windows Driver` <br>
+> (Mac) `CP210x VCP Mac OSX Driver` <br>
+> 安裝後 Arduino 就能正確偵測各個板子
 
 ---
 
@@ -167,9 +168,11 @@ pip install -r requirements.txt
 >     import XXX
 > ModuleNotFoundError: No module named 'XXX'
 > ```
-> 請自行在 Vscode 內部安裝 `pip install 該插件`，或是在網路上查詢如何安裝該插件。
+> 請自行在 VScode 內部安裝 `pip install 該插件`，或是在網路上查詢如何安裝該插件。
 
 ---
+
+## 📁 程式碼
 
 ### Tag_Encryption.ino
 
