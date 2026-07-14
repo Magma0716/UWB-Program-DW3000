@@ -1,10 +1,5 @@
-socket
-json
-numpy
-pandas
-matplotlib
-typing
-cmath
-tkinter
-serial
-seaborn
+numpy==2.2.6
+pandas==2.3.1
+matplotlib==3.10.5
+seaborn==0.13.2
+pyserial==3.5
