@@ -193,7 +193,7 @@ int totalTags = 4;
 | `totalTags` | 多 Tag 分時輪詢時須填入總數，分配時段給各個 Tag 去傳收封包 |
 | `NUM_ANCHORS` | 設定 Tag 依序向哪些 Anchor 發起測距；此值會影響 `ANCHOR_LIST` 的展開數量 |
 
-#### 加密與安全設定
+#### 加密設定
 
 ```cpp
 // Tag 識別名稱（T1 ~ T4）
@@ -226,7 +226,7 @@ const uint8_t TAG_ADDR[] = { 'T', '1' };
 > - `STS=false, AES=true`：僅 MAC Payload 加密，適用於需保護測距結果的場景
 > - `STS=true, AES=true`：雙重保護（目前在測試階段，不建議正式使用）
 
-#### WiFi 網路設定
+#### 網路設定
 
 ```cpp
 // WiFi 連線資訊
@@ -236,7 +236,7 @@ const uint8_t TAG_ADDR[] = { 'T', '1' };
 
 > 設定區域網路的名稱與密碼。Tag 透過 UDP 廣播將測距結果以 JSON 格式傳送至同一網段內的 Python 定位主機。
 
-#### 多 Tag 分時輪詢
+#### 多 Tag 設定
 
 ```cpp
 // 每個 Tag 分配的時間槽長度（ms）
@@ -259,7 +259,7 @@ unsigned long slotDuration = 30;
 
 > **角色**：被動監聽 Poll 封包、記錄到達時間、回傳 Response（內含雙方時戳）。Anchor 不計算距離，僅負責協助 Tag 完成雙向測距。
 
-#### 狀態設定
+#### 加密與安全設定
 
 ```cpp
 // Anchor 識別名稱（A1 ~ A4）
@@ -284,17 +284,17 @@ const uint8_t ANCHOR_ADDR[] = { 'A', '1' };
 
 ---
 
-## Python 桌面應用程式
+## 🐍 Python 程式
 
 Python 程式透過 **UDP 通訊協定** 接收來自 Tag 的 JSON 測距資料，並提供即時定位顯示、統計圖表繪製與數據匯出等功能。
 
 ---
 
-### 2D_position_display.py (二維即時定位顯示)
+### 2D_position_display.py
 
 > 透過 UDP 接收 Tag 的測距資料，在二維平面圖上即時呈現 Tag 位置，支援 3 Anchor 三角定位。
 
-#### 網路設定：
+#### 網路設定
 ```python
 # 綁定 UDP 接收 IP（須與 Tag WiFi 處於同一網段）
 sock.bind(('192.168.0.108', 8001))
@@ -321,11 +321,11 @@ self.distance_A1_A2 = 2.0
 
 ---
 
-### 2D_3D_position_display_res_jitter_ns.py (2D/3D 定位與效能分析)
+### 2D_3D_position_display_res_jitter_ns.py
 
 > 同時呈現 `二維俯視圖` 與 `三維立體圖`，並自動匯出 `殘差 Residual` `跳動 Jitter` `延遲 Latency` 三大效能指標的統計圖。
 
-#### 自訂區域：
+#### 自訂區域
 ```python
 CONFIG = {
     "ENABLE_STATS_EXPORT": True,   # 是否啟用統計匯出功能
@@ -336,7 +336,7 @@ CONFIG = {
 }
 ```
 
-#### 實體 Anchor 座標：
+#### 實體 Anchor 座標
 ```python
 self.anchors = {
     'A1': (0.0, 0.0, 0.0),       # 原點
