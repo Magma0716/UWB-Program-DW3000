@@ -9,7 +9,12 @@
 ---
 `Click the buttons below to switch languages!`
 
-[![English](https://img.shields.io/badge/Language-English-blue)](README.md) [![繁體中文](https://img.shields.io/badge/Language-繁體中文-green)](README.zh-TW.md)
+[![English](https://img.shields.io/badge/Language-English-blue)](README.md) 
+[![繁體中文](https://img.shields.io/badge/Language-繁體中文-green)](README.zh-TW.md)
+
+[![English](https://img.shields.io/badge/Language-English-blue)](README.md)
+[![Português](https://img.shields.io/badge/Language-Português-green)](README.pt-PT.md)
+[![Español](https://img.shields.io/badge/Language-Español-red)](README.es-ES.md)
 
 ---
 
