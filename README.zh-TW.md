@@ -190,7 +190,7 @@ int totalTags = 4;
 
 | 參數 | 說明 |
 | :--- | :--- |
-| `totalTags` | 多 Tag 分時輪詢時須填入總數，作為時間槽分配依據 |
+| `totalTags` | 多 Tag 分時輪詢時須填入總數，分配時段給各個 Tag 去傳收封包 |
 | `NUM_ANCHORS` | 設定 Tag 依序向哪些 Anchor 發起測距；此值會影響 `ANCHOR_LIST` 的展開數量 |
 
 #### 加密與安全設定
@@ -199,13 +199,13 @@ int totalTags = 4;
 // Tag 識別名稱（T1 ~ T4）
 const uint8_t TAG_ADDR[] = { 'T', '1' };
 
-// 啟用 STS
+// 啟用 STS 加密
 #define STS_ENCRYPTION   false  // false | true
 
 // 啟用 AES-CCM 加密
 #define AES_ENCRYPTION   false  // false | true
 
-// 額外填充位元組（0 ~ 47）
+// 填充位元組（0 ~ 47）
 #define Padding  0
 
 // 隨機 Nonce 字節數（0 ~ 4）
@@ -214,16 +214,16 @@ const uint8_t TAG_ADDR[] = { 'T', '1' };
 
 | 參數 | 預設值 | 說明 |
 | :--- | :---: | :--- |
-| `TAG_ADDR` | `'T','1'` | 2 字元識別碼，同時作為網路層短地址。Tag 數量 ≤ 4 時建議依序命名 T1 ∼ T4 |
+| `TAG_ADDR` | `'T','1'` | 2 字元識別碼，同時作為網路層短地址。建議依序命名 T1 ~ 。 |
 | `STS_ENCRYPTION` | `false` | 開啟後啟用 DW3000 硬體 STS 功能，對 PHR 進行加解密，防止實體層竄改 |
-| `AES_ENCRYPTION` | `false` | 開啟後對 MAC Payload（即測距距離值）進行 AES-CCM 加密，確保資料機密性 |
-| `Padding` | `0` | 在封包末端填入特定長度的無意義字節，用於壓力測試或模擬不同封包尺寸 |
-| `Random_Nonce_Byte` | `0` | 指定 Nonce（初始向量）的隨機位元組數（1=8位元, 2=16位元, ..., 4=32位元），數值越大碰撞機率越低但搜尋時間越長 |
+| `AES_ENCRYPTION` | `false` | 開啟後對 MAC Payload 進行 AES-CCM 加密，確保資料機密性 |
+| `Padding` | `0` | 在封包末端填入特定長度的無意義位元組，用於壓力測試或模擬不同封包尺寸 |
+| `Random_Nonce_Byte` | `0` | 指定 `初始向量 Nonce` 的隨機位元組數，數值越大碰撞機率越低但搜尋時間越長 |
 
-> **加密模式組合建議**：
+> **加密組合建議**：
 > - `STS=false, AES=false`：純測距模式，延遲最低
 > - `STS=true, AES=false`：僅實體層保護，適用於對距離精度要求高的場景
-> - `STS=false, AES=true`：僅 Payload 加密，適用於需保護測距結果的場景
+> - `STS=false, AES=true`：僅 MAC Payload 加密，適用於需保護測距結果的場景
 > - `STS=true, AES=true`：雙重保護（目前在測試階段，不建議正式使用）
 
 #### WiFi 網路設定
@@ -234,16 +234,13 @@ const uint8_t TAG_ADDR[] = { 'T', '1' };
 #define tmp_password  "PASSWORD"
 ```
 
-設定區域網路的名稱與密碼。Tag 透過 UDP 廣播（port `8001`）將測距結果以 JSON 格式傳送至同一網段內的 Python 定位主機。
+> 設定區域網路的名稱與密碼。Tag 透過 UDP 廣播將測距結果以 JSON 格式傳送至同一網段內的 Python 定位主機。
 
-#### 多 Tag 分時輪詢（Time-Slot Window）
+#### 多 Tag 分時輪詢
 
 ```cpp
-// 每個 Tag 分配的時間槽長度（毫秒）
+// 每個 Tag 分配的時間槽長度（ms）
 unsigned long slotDuration = 30;
-
-// 從 TAG_ADDR 中解析出此 Tag 編號（'1' → 1）
-int myTagID = (int)TAG_ADDR[1] - '0';
 
 // 啟用分時機制（當 totalTags > 1 時必須設為 true）
 #define window_mode true
@@ -252,14 +249,13 @@ int myTagID = (int)TAG_ADDR[1] - '0';
 | 參數 | 說明 |
 | :--- | :--- |
 | `slotDuration` | 每個 Tag 專屬的傳輸窗口（ms）。窗口內 Tag 會依序向所有 Anchor 發起測距 |
-| `myTagID` | 由 `TAG_ADDR[1]` 自動計算得出，決定此 Tag 在第幾個時間槽活動 |
 | `window_mode` | `true` = 啟用分時輪詢，避免多 Tag 同時發送造成碰撞；`false` = 持續不斷測距（單 Tag 專用） |
 
-> **運作原理**：系統時間被切割成 `totalTags × slotDuration` 的循環週期。每個 Tag 只在自己的 `(myTagID-1) × slotDuration ∼ myTagID × slotDuration` 時間窗口內發送，其餘時間保持靜默。
+> **運作原理**：系統時間被切割成 `totalTags × slotDuration` 的循環週期。每個 Tag 只在自己的 `(myTagID-1) × slotDuration ∼ myTagID × slotDuration` 時間窗口內發送，其餘時間保持閒置狀態。
 
 ---
 
-### Anchor_Encryption.ino（Anchor 端 — 測距回應者）
+### Anchor_Encryption.ino
 
 > **角色**：被動監聽 Poll 封包、記錄到達時間、回傳 Response（內含雙方時戳）。Anchor 不計算距離，僅負責協助 Tag 完成雙向測距。
 
@@ -281,12 +277,10 @@ const uint8_t ANCHOR_ADDR[] = { 'A', '1' };
 
 | 參數 | 說明 |
 | :--- | :--- |
-| `ANCHOR_ADDR` | 2 字元識別碼。**必須與 Tag 端 `ANCHOR_LIST` 中的名稱完全匹配** |
-| `STS_ENCRYPTION` | 應與所有 Tag 使用相同設定，否則 STS 金鑰比對失敗會導致封包被丟棄 |
-| `AES_ENCRYPTION` | 應與所有 Tag 使用相同設定，否則解密失敗 |
+| `ANCHOR_ADDR` | 2 字元識別碼。建議依序命名 A1 ~ 。 |
+| `STS_ENCRYPTION` | 需與所有 Tag 使用相同設定，否則 STS 金鑰比對失敗會導致封包被丟棄 |
+| `AES_ENCRYPTION` | 需與所有 Tag 使用相同設定，否則解密失敗 |
 | `Padding` | 必須與 Tag 端的 `Padding` 值一致，否則封包長度不匹配會造成解析錯誤 |
-
-> **重要同步規則**：同一個場域中的所有 Anchor 與 Tag，其加密開關（`STS_ENCRYPTION`、`AES_ENCRYPTION`）及 `Padding` 值**必須完全相同**，否則無法正常通訊。
 
 ---
 
@@ -296,9 +290,18 @@ Python 程式透過 **UDP 通訊協定** 接收來自 Tag 的 JSON 測距資料�
 
 ---
 
-### 2D_position_display.py — 二維即時定位顯示
+### 2D_position_display.py (二維即時定位顯示)
 
-> 透過 UDP 接收 Tag 的測距資料，在二維平面圖上即時呈現 Tag 位置，支援 **3 Anchor 三角定位**。
+> 透過 UDP 接收 Tag 的測距資料，在二維平面圖上即時呈現 Tag 位置，支援 3 Anchor 三角定位。
+
+#### 網路設定：
+```python
+# 綁定 UDP 接收 IP（須與 Tag WiFi 處於同一網段）
+sock.bind(('192.168.0.108', 8001))
+
+# 實體 Anchor 間距（公尺）
+self.distance_A1_A2 = 2.0
+```
 
 **功能特色**：
 - **多 Anchor 連線視覺化**：藍色線段連接各 Anchor 形成定位場域
@@ -308,14 +311,6 @@ Python 程式透過 **UDP 通訊協定** 接收來自 Tag 的 JSON 測距資料�
 - **歷史軌跡**：顯示最近 40 筆位置的移動軌跡
 - **速度計算**：根據 EKF 狀態向量自動估算即時移動速度
 
-**執行前需修改**：
-```python
-# 綁定 UDP 接收 IP（須與 Tag WiFi 處於同一網段）
-sock.bind(('192.168.0.108', 8001))
-
-# 實體 Anchor 間距（公尺），請根據實際部署修改
-self.distance_A1_A2 = 2.0
-```
 
 **按鈕功能**：
 | 按鈕 | 功能 |
@@ -326,18 +321,11 @@ self.distance_A1_A2 = 2.0
 
 ---
 
-### 2D_3D_position_display_res_jitter_ns.py — 2D/3D 定位與效能分析
+### 2D_3D_position_display_res_jitter_ns.py (2D/3D 定位與效能分析)
 
-> 進階定位顯示程式，同時呈現 **二維俯瞰圖** 與 **三維立體圖**，並內建 **Residual（殘差）、Jitter（跳動）、Latency（延遲）** 三大效能指標的統計匯出功能。
+> 同時呈現 `二維俯視圖` 與 `三維立體圖`，並自動匯出 `殘差 Residual` `跳動 Jitter` `延遲 Latency` 三大效能指標的統計圖。
 
-**功能特色**：
-- **雙視角同步顯示**：左側 2D 俯視圖 + 右側 3D 立體圖（支援自動旋轉）
-- **多 Tag 同時追蹤**：支援 T1 ∼ T4 共 4 個 Tag 同時顯示，各自以不同顏色區分
-- **3D 四 Anchor 定位**：透過最小二乘法 (LSTSQ) 求解三維座標（需至少 4 個 Anchor）
-- **歷史路徑雲**：累積顯示所有歷史原始點（半透明 x 記號）
-- **效能指標匯出**：當樣本數達 `TARGET_SAMPLES` 時自動儲存 Residual、Jitter、Latency 統計圖表
-
-**自訂義區域**：
+#### 自訂區域：
 ```python
 CONFIG = {
     "ENABLE_STATS_EXPORT": True,   # 是否啟用統計匯出功能
@@ -348,17 +336,22 @@ CONFIG = {
 }
 ```
 
-**實體 Anchor 座標（預設佈置）**：
+#### 實體 Anchor 座標：
 ```python
 self.anchors = {
     'A1': (0.0, 0.0, 0.0),       # 原點
-    'A2': (2.0, 0.0, 0.0),       # X 軸方向 2m
-    'A3': (1.0, 1.732, 0.0),     # 正三角形頂點（邊長 2m）
-    'A4': (1.0, 0.0, 0.4),       # Z 軸抬升 0.4m（用於 3D 定位）
+    'A2': (2.0, 0.0, 0.0),       # X 軸
+    'A3': (1.0, 1.732, 0.0),     # 正三角形頂點
+    'A4': (1.0, 0.0, 0.4),       # Z 軸 (用於 3D 定位)
 }
 ```
 
-> ⚠️ 實際部署時，請根據您的 Anchor 擺放位置修改上述座標，並確認 `distance_A1_A2` 與 `A2 - A1` 的幾何距離一致。
+**功能特色**：
+- **雙視角同步顯示**：左側 2D 俯視圖 + 右側 3D 立體圖
+- **多 Tag 同時追蹤**：支援 T1 ~ T4 共 4 個 Tag 同時顯示，各自以不同顏色區分
+- **3D 四 Anchor 定位**：透過最小二乘法 (LSTSQ) 求解三維座標（需至少 4 個 Anchor）
+- **歷史路徑雲**：累積顯示所有歷史原始點
+- **效能指標匯出**：當樣本數達 `TARGET_SAMPLES` 時自動儲存 `Residual` `Jitter` `Latency` 統計圖表
 
 **按鈕功能**：
 | 按鈕 | 功能 |
@@ -368,7 +361,7 @@ self.anchors = {
 | **Raw** | 切換原始測量點的顯示 |
 | **EKF** | 切換 EKF 預測點與軌跡的顯示 |
 
-**匯出圖表說明（TARGET_SAMPLES 達標後自動觸發）**：
+**匯出圖表說明**：
 | 圖表 | 橫軸 | 縱軸 | 意義 |
 | :--- | :--- | :--- | :--- |
 | Residual 圖 | 樣本序號 | 定位殘差 (m) | 原始點與各 Anchor 距離圈的吻合程度，越小表示定位越精準 |
@@ -379,30 +372,31 @@ self.anchors = {
 
 ### Draw_dis_ns.py — 距離與延遲即時繪圖
 
-> 透過序列埠連接 ESP32，即時接收測距資料並繪製 **距離-樣本序號圖** 與 **延遲-樣本序號圖**，適合長期穩定性測試。
+> 透過序列埠，即時接收測距資料並繪製 `距離 Distance` 與 `延遲 Latency` 圖。
 
-**功能特色**：
-- 雙圖並排顯示：左圖為距離（公尺），右圖為延遲（奈秒）
-- 自動計算並標示平均值（紅色虛線）與標準差
-- 支援資料自動存檔（JSON 格式），累積多輪測試結果
-- 圖片自動儲存至 `Draw_Error_Images/` 資料夾
-
-**自訂義區域**：
+#### 自訂區域：
 ```python
-PORT = 'COM10'             # ESP32 序列埠編號（請根據裝置管理員修改）
-BAUD_RATE = 115200         # 鮑率（須與 Tag_Encryption.ino 一致）
+PORT = 'COM10'             # 序列埠編號（取決於你的 USB 孔位）
+BAUD_RATE = 115200         # 鮑率
 DATA_LIMIT = 5000          # 單次擷取的資料筆數上限
 padding = '0'              # 當前測試的 Padding 值（用於檔案命名與統計分類）
 encryption = 'AES_'        # 加密模式前綴（non- / STS_ / AES_ / AES+STS_）
 ```
 
-> **使用流程**：執行程式後，先從序列埠讀取 STS 同步資料（若加密模式為 STS），按下 Ctrl+C 開始正式採集。採集達 `DATA_LIMIT` 筆後自動儲存圖表。
+**功能特色**：
+- 雙圖並排顯示：左圖為距離（m），右圖為延遲（ns）
+- 自動計算並標示平均值（紅色虛線）與標準差
+- 支援資料自動存檔（JSON 格式），累積多輪測試結果
+
+> **使用流程**：執行程式後，從序列埠讀取資料。採集達 `DATA_LIMIT` 筆後自動儲存圖表至 `Draw_Error_Images/` 資料夾。
+
+A
 
 ---
 
 ### Draw_res_jitter_ns.py — 多 Tag 效能整合比較圖
 
-> 手動輸入多組 Tag 在不同加密模式下的 Residual、Jitter、Latency 數據，繪製**整合式柱狀圖**，用於快速對比不同加密配置或不同 Tag 的效能差異。
+> 手動輸入多組 Tag 在不同加密模式下的 Residual、Jitter、Latency 數據，繪製整合圖，用於快速對比不同加密配置或不同 Tag 的效能差異。
 
 **資料輸入格式**：
 ```python
@@ -426,11 +420,11 @@ choose  = 0  # 0 = 未加密資料, 1 = 加密資料（僅 section=0 時有效�
 | :---: | :---: | :--- |
 | `0` | `0` | 僅繪製未加密模式下的效能長條圖 |
 | `0` | `1` | 僅繪製加密模式下的效能長條圖 |
-| `1` | (任意) | 上下對照顯示：上方為未加密、下方為加密，便於直接比較 |
+| `1` | `任意` | 上下對照顯示：上方為未加密、下方為加密，便於直接比較 |
 
 ---
 
-### Positioning.py — 場域佈置示意圖
+### Positioning\.py — 場域佈置示意圖
 
 > 根據指定的 Anchor 與 Tag 座標，繪製 **3D 場域佈置圖**，輸出高解析度 PNG 圖片，適合用於論文、簡報或技術文件中呈現定位場域規劃。
 
@@ -484,10 +478,18 @@ python Draw_packet.py
 
 ---
 
-### Draw_Error_Images/ — 統計圖表儲存目錄
 
-> Python 繪圖程式（`Draw_dis_ns.py`、`2D_3D_position_display_res_jitter_ns.py`）自動輸出的圖表預設儲存於此資料夾。請勿手動刪除，以免 README 中的圖片連結失效。
-## Tag_Encryption\.ino
+
+
+
+
+
+
+
+
+
+
+
 自訂義區域：
 * **環境**：總共有多少板子在跑
 ```cpp
