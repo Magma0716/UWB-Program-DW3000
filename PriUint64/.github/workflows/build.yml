@@ -1,0 +1,61 @@
+name: build
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  format:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get install -y --no-install-recommends clang-format-15 doxygen
+      - uses: actions/checkout@v4
+      - name: Check code style
+        run: |
+          mk/format-code.sh
+          git diff --exit-code
+  build:
+    strategy:
+      matrix:
+        include:
+          - chip: ESP8266
+            fqbn: esp8266:esp8266:nodemcuv2
+            platforms: |
+              - name: esp8266:esp8266
+                source-url: https://arduino.esp8266.com/stable/package_esp8266com_index.json
+          - chip: ESP32
+            fqbn: esp32:esp32:esp32wrover
+          - chip: ESP32C3
+            fqbn: esp32:esp32:esp32c3
+          - chip: nRF52
+            fqbn: adafruit:nrf52:feather52832
+            platforms: |
+              - name: adafruit:nrf52
+                source-url: https://adafruit.github.io/arduino-board-index/package_adafruit_index.json
+            pip-deps: adafruit-nrfutil
+          - chip: RP2040
+            fqbn: rp2040:rp2040:rpipicow
+            platforms: |
+              - name: rp2040:rp2040
+                source-url: https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json
+      fail-fast: false
+    name: ${{ matrix.chip }}
+    runs-on: ubuntu-22.04
+    steps:
+      - run: pip install --user ${{ matrix.pip-deps }}
+        if: ${{ matrix.pip-deps }}
+      - uses: actions/checkout@v4
+      - uses: arduino/compile-sketches@v1
+        with:
+          fqbn: ${{ matrix.fqbn }}
+          platforms: ${{ matrix.platforms }}
+          libraries: |
+            - source-path: ./
+            - name: Streaming
+  publish:
+    runs-on: ubuntu-24.04
+    needs: [format, build]
+    steps:
+      - run: true

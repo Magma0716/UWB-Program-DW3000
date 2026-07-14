@@ -2,18 +2,15 @@
 
 #include "dw3000.h"
 #include "dw3000_mac_802_15_4.h"
+#include "SPI.h"
+#include <PriUint64.h>
 
 /* ================================ */
 /* ========== 數據修改區 =========== */
 /* ================================ */
 
-// 延遲時間
-#define POLL_RX_TO_RESP_TX_DLY_UUS 2000 // Treply (未加密:600, STS加密:1000, AES加密:2000)
-#define RESP_MSG_POLL_RX_TS_IDX 0       // (未加密:10, AES加密:0)
-#define RESP_MSG_RESP_TX_TS_IDX 4       // (未加密:14, AES加密:4)
-
 // Anchor 名稱 (e.g. A1, A2, A3...)
-const uint8_t ANCHOR_ADDR[] = { 'A', '4' };  
+const uint8_t ANCHOR_ADDR[] = { 'A', '1' };  
 
 // STS 加密 (for PHR ms)
 #define STS_ENCRYPTION false  // false, true
@@ -24,10 +21,31 @@ const uint8_t ANCHOR_ADDR[] = { 'A', '4' };
 // Padding
 #define Padding 0
 
+#define debug false
+
 /* ================================ */
 /* ===== DW3000 Basic Config ====== */
 /* ================================ */
 
+// 延遲時間
+#if STS_ENCRYPTION == false && AES_ENCRYPTION == false // non-encryption
+    #define POLL_RX_TO_RESP_TX_DLY_UUS 600
+    #define RESP_MSG_POLL_RX_TS_IDX 10
+    #define RESP_MSG_RESP_TX_TS_IDX 14
+#elif STS_ENCRYPTION == true && AES_ENCRYPTION == false // STS
+    #define POLL_RX_TO_RESP_TX_DLY_UUS 1000
+    #define RESP_MSG_POLL_RX_TS_IDX 10
+    #define RESP_MSG_RESP_TX_TS_IDX 14   
+#elif STS_ENCRYPTION == false && AES_ENCRYPTION == true // AES
+    #define POLL_RX_TO_RESP_TX_DLY_UUS 2000
+    #define RESP_MSG_POLL_RX_TS_IDX 0
+    #define RESP_MSG_RESP_TX_TS_IDX 4  
+
+#else // this isn't test. Do not use this section.
+    #define POLL_RX_TO_RESP_TX_DLY_UUS 1000
+    #define RESP_MSG_POLL_RX_TS_IDX 0
+    #define RESP_MSG_RESP_TX_TS_IDX 4  
+#endif
 
 #define PIN_RST 27
 #define PIN_IRQ 34
@@ -40,10 +58,10 @@ const uint8_t ANCHOR_ADDR[] = { 'A', '4' };
 uint64_t poll_rx_ts;
 uint64_t resp_tx_ts;
 
-const uint8_t PAN_ID[] = { 0xCA, 0xDE };
+const uint8_t PAN_ID[] = { 0x21, 0x43 };
 const uint8_t TAG_ADDR[] = { 'T', '1' };      
 extern dwt_txconfig_t txconfig_options;
-
+extern SPISettings _fastSPI;
 
 /* ================================ */
 /* ======== STS Encryption ======== */
@@ -146,11 +164,12 @@ uint32_t status_reg;
 static uint8_t rx_poll_msg[12 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], ANCHOR_ADDR[0], ANCHOR_ADDR[1], 0xE0, 0, 0};
 static uint8_t tx_resp_msg[20 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], ANCHOR_ADDR[0], ANCHOR_ADDR[1], TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static uint8_t rx_buffer[RX_BUF_LEN];
+static uint8_t buffer[RX_BUF_LEN];
 static uint8_t received_sn;
 
-#define SRC_ADDR        0x1122334455667788 /* this is the address of the initiator */
-#define DEST_ADDR       0x8877665544332211 /* this is the address of the responder */
-#define DEST_PAN_ID     0x4321             /* this is the PAN ID used in this example */
+uint64_t SRC_ADDR =     0x8877665544330000; /* this is the address of the initiator */
+uint64_t DEST_ADDR =    0x1122334455660000; /* this is the address of the responder */
+#define DEST_PAN_ID     0x4321              /* this is the PAN ID used in this example */
 
 /* Frame counter */
 static uint32_t frame_seq_nb = 0;
@@ -167,6 +186,8 @@ void crypto_load(int padding) {
 
 void setup() {
     Serial.begin(115200);
+
+    _fastSPI = SPISettings(16000000L, MSBFIRST, SPI_MODE0);
 
     spiBegin(PIN_IRQ, PIN_RST);
     spiSelect(PIN_SS);
@@ -192,6 +213,11 @@ void setup() {
 
     /* AES */
     if(AES_ENCRYPTION){
+
+        SRC_ADDR = (SRC_ADDR & 0xFFFFFFFFFFFF0000) | 
+                     ((uint64_t)ANCHOR_ADDR[0] << 8) | 
+                     (uint64_t)ANCHOR_ADDR[1];
+
         /* Configure the TX spectrum parameters (power, PG delay and PG count) */
         dwt_configuretxrf(&txconfig_options);
 
@@ -219,9 +245,19 @@ void setup() {
         aes_job_tx.payload_len = sizeof(tx_resp_msg); /* payload length */
     }
     else{
-        /* antenna delay */
+        // Enabling LEDs here for debug so that for each TX the D1 LED will flash on DW3000 red eval-shield boards.
+        dwt_setleds(DWT_LEDS_ENABLE | DWT_LEDS_INIT_BLINK);
+
+        /* Configure the TX spectrum parameters (power, PG delay and PG count) */
+        dwt_configuretxrf(&txconfig_options);
+
+        /* Apply default antenna delay value. See NOTE 2 below. */
         dwt_setrxantennadelay(RX_ANT_DLY);
         dwt_settxantennadelay(TX_ANT_DLY);
+
+        /* Next can enable TX/RX states output on GPIOs 5 and 6 to help debug, and also TX/RX LEDs
+        * Note, in real low power applications the LEDs should not be used. */
+        dwt_setlnapamode(DWT_LNA_ENABLE | DWT_PA_ENABLE);
     }
     
     
@@ -238,8 +274,11 @@ void loop() {
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
 
     while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_ERR))) {};
-
+    
     if (status_reg & SYS_STATUS_RXFCG_BIT_MASK) {
+
+        uint32_t frame_len;
+
         /* STS lock check */
         if (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_CP_LOCK_BIT_MASK) && STS_ENCRYPTION) {
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
@@ -249,11 +288,20 @@ void loop() {
 
         /* AES Encryption */
         if(AES_ENCRYPTION){
+
+            
+
             /* Clear good RX frame event in the DW IC status register. */
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
 
             /* Read data length that was received */
-            uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID)&RXFLEN_MASK;
+            frame_len = dwt_read32bitreg(RX_FINFO_ID)&RXFLEN_MASK;
+
+            /* 改變 DEST_ADDR */
+            dwt_readrxdata(buffer, frame_len, 0);
+            DEST_ADDR = (DEST_ADDR & 0xFFFFFFFFFFFF0000) | 
+                    ((uint64_t)buffer[14] << 8) | 
+                    (uint64_t) buffer[13];
 
             /* A frame has been received: firstly need to read the MHR and check this frame is what we expect:
              * the destination address should match our source address (frame filtering can be configured for this check,
@@ -264,6 +312,25 @@ void loop() {
             PAYLOAD_PTR_802_15_4(&mac_frame)=rx_buffer; /* Set the MAC frame structure payload pointer
                                                              (this will contain decrypted data if status below is AES_RES_OK) */
 
+            // 從剛解開的 rx_buffer 或 mac_frame 中取得 Tag ID
+            
+            uint8_t TagID[2];
+            TagID[0] = rx_buffer[5]; // 'T'
+            TagID[1] = rx_buffer[6]; // '1'
+/*            
+            Serial.print("Full RX Buffer: ");
+            for (int i = 0; i < 32; i++) {
+                Serial.print(buffer[i], HEX); 
+                Serial.print(" ");
+            }
+            Serial.println();
+*/
+            
+            if(debug){
+                Serial.println(PriUint64<HEX>(DEST_ADDR));
+                Serial.println(PriUint64<HEX>(SRC_ADDR));
+            }
+            
             status=rx_aes_802_15_4(&mac_frame, frame_len, &aes_job_rx, sizeof(rx_buffer), keys_options, DEST_ADDR, SRC_ADDR, &aes_config);
             if (status!=AES_RES_OK)
             {
@@ -288,8 +355,18 @@ void loop() {
 
             /* Check that the payload of the MAC frame matches the expected poll message
              * as should be sent by "SS TWR AES initiator" example. */
-            if (memcmp(rx_buffer, rx_poll_msg, aes_job_rx.payload_len) == 0)
-            {
+            //if (memcmp(rx_buffer, rx_poll_msg, aes_job_rx.payload_len) == 0)
+            
+            if(rx_buffer[3] == PAN_ID[0] && rx_buffer[4] == PAN_ID[1])
+            {   
+                
+                // updates status here 4/30
+                // 動態修改回傳訊息中的目標位址
+                // rx_poll_msg = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], ANCHOR_ADDR[0], ANCHOR_ADDR[1], 0xE0, 0, 0};
+                // tx_resp_msg = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], ANCHOR_ADDR[0], ANCHOR_ADDR[1], TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+                rx_poll_msg[5] = TagID[0]; rx_poll_msg[6] = TagID[1];
+                tx_resp_msg[7] = TagID[0]; tx_resp_msg[8] = TagID[1];
+
                 uint32_t        resp_tx_time;
                 int             ret;
                 uint8_t         nonce[13];
@@ -351,7 +428,7 @@ void loop() {
                 /* configure the frame control and start transmission */
                 dwt_writetxfctrl(aes_job_tx.header_len + aes_job_tx.payload_len + aes_job_tx.mic_size + FCS_LEN, 0, 1); /* Zero offset in TX buffer, ranging. */
                 ret = dwt_starttx(DWT_START_TX_DELAYED);
-
+                
                 /* If dwt_starttx() returns an error, abandon this ranging exchange and proceed to the next one. See NOTE 10 below. */
                 if (ret == DWT_SUCCESS)
                 {
@@ -366,33 +443,73 @@ void loop() {
         }
         else
         {
-            dwt_readrxdata(rx_buffer, 24, 0);
-            rx_buffer[2] = 0;
-            if (memcmp(rx_buffer, rx_poll_msg, 10) == 0) {
-                uint64_t rx_ts = get_rx_timestamp_u64();
-                uint32_t tx_time = (rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
-                dwt_setdelayedtrxtime(tx_time);
-
-                uint64_t tx_ts = (((uint64_t)(tx_time & 0xFFFFFFFEUL)) << 8) + TX_ANT_DLY;
-                resp_msg_set_ts(&tx_resp_msg[RESP_MSG_POLL_RX_TS_IDX], rx_ts);
-                resp_msg_set_ts(&tx_resp_msg[RESP_MSG_RESP_TX_TS_IDX], tx_ts);
-
-                dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0);
-                dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1);
-
-                if (dwt_starttx(DWT_START_TX_DELAYED) == DWT_SUCCESS) {
-                    while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS_BIT_MASK));
-                    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
-                }
-
-                //frame_seq_nb++;
-            }
+            /* Clear good RX frame event in the DW IC status register. */
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
-        }
-        
-        // dwt_readrxdata(rx_buffer, RX_BUF_LEN, 0);
 
+            /* A frame has been received, read it into the local buffer. */
+            frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
+            if (frame_len <= sizeof(rx_buffer))
+            {
+                dwt_readrxdata(rx_buffer, frame_len, 0);
         
+                // 提取發送者 (Tag) 的 ID
+                uint8_t incoming_tag_id[2];
+                incoming_tag_id[0] = rx_buffer[5]; 
+                incoming_tag_id[1] = rx_buffer[6];
+
+                // 將回傳目標設為該 Tag
+                tx_resp_msg[7] = incoming_tag_id[0];
+                tx_resp_msg[8] = incoming_tag_id[1];
+                
+                /* Check that the frame is a poll sent by "SS TWR initiator" example.
+                * As the sequence number field of the frame is not relevant, it is cleared to simplify the validation of the frame. */
+                rx_buffer[2] = 0;
+                //if (memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) == 0) <------
+                if(rx_buffer[9] == 0xE0 &&                                
+                rx_buffer[3] == PAN_ID[0] && rx_buffer[4] == PAN_ID[1] &&
+                rx_buffer[7] == ANCHOR_ADDR[0] && rx_buffer[8] == ANCHOR_ADDR[1])
+                {
+                    uint32_t resp_tx_time;
+                    int ret;
+
+                    /* Retrieve poll reception timestamp. */
+                    poll_rx_ts = get_rx_timestamp_u64();
+
+                    /* Compute response message transmission time. See NOTE 7 below. */
+                    resp_tx_time = (poll_rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
+                    dwt_setdelayedtrxtime(resp_tx_time);
+
+                    /* Response TX timestamp is the transmission time we programmed plus the antenna delay. */
+                    resp_tx_ts = (((uint64_t)(resp_tx_time & 0xFFFFFFFEUL)) << 8) + TX_ANT_DLY;
+
+                    /* Write all timestamps in the final message. See NOTE 8 below. */
+                    resp_msg_set_ts(&tx_resp_msg[RESP_MSG_POLL_RX_TS_IDX], poll_rx_ts);
+                    resp_msg_set_ts(&tx_resp_msg[RESP_MSG_RESP_TX_TS_IDX], resp_tx_ts);
+
+                    /* Write and send the response message. See NOTE 9 below. */
+                    tx_resp_msg[2] = frame_seq_nb;
+                    dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0); /* Zero offset in TX buffer. */
+                    dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1);          /* Zero offset in TX buffer, ranging. */
+                    ret = dwt_starttx(DWT_START_TX_DELAYED);
+
+                    /* If dwt_starttx() returns an error, abandon this ranging exchange and proceed to the next one. See NOTE 10 below. */
+                    if (ret == DWT_SUCCESS)
+                    {
+                        /* Poll DW IC until TX frame sent event set. See NOTE 6 below. */
+                        while (!(dwt_read32bitreg(SYS_STATUS_ID) & SYS_STATUS_TXFRS_BIT_MASK))
+                        {
+                        };
+
+                        /* Clear TXFRS event. */
+                        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
+
+                        /* Increment frame sequence number after transmission of the poll message (modulo 256). */
+                        frame_seq_nb++;
+                    }
+                }
+            }
+        }
+        // dwt_readrxdata(rx_buffer, RX_BUF_LEN, 0);
     }
     else
     {

@@ -2,22 +2,26 @@
 
 #include "dw3000.h"
 #include "dw3000_mac_802_15_4.h"
+#include "SPI.h"
+#include <PriUint64.h>
+#include <bitset>
+#include <algorithm>
 
 /* ================================ */
 /* ========== 數據修改區 =========== */
 /* ================================ */
 
-// 延遲時間
-#define POLL_TX_TO_RESP_RX_DLY_UUS 1720  // Tround (未加密:240, STS加密:500, AES加密:1720)
-#define RESP_RX_TIMEOUT_UUS 250          // T4 (未加密:400, STS加密:1500, AES加密:250)
-#define RESP_MSG_POLL_RX_TS_IDX 0        // (未加密:10, AES加密:0)
-#define RESP_MSG_RESP_TX_TS_IDX 4        // (未加密:14, AES加密:4)
-
-// Tag 強迫休息時間
-#define RNG_DELAY_MS 10  // <-- 改小能讓輸出變快
+// Tag 數量
+int totalTags = 1;
 
 // Anchor 數量
-#define NUM_ANCHORS 4
+#define NUM_ANCHORS 1
+
+// Tag 名稱
+const uint8_t TAG_ADDR[] = { 'T', '1' }; 
+
+// Tag 強迫休息時間 (改小能讓輸出變快)
+#define RNG_DELAY_MS 0
 
 // STS 加密 (for PHR ms)
 #define STS_ENCRYPTION false  // false, true
@@ -28,17 +32,51 @@
 // Padding
 #define Padding 0
 
+// Nonce (IV)
+#define Random_Nonce_Byte 0
+
 // Wifi
-#define tmp_ssid "Alan6711"
-#define tmp_password "bbb520111"
+#define tmp_ssid "PASSWORD"
+#define tmp_password "PASSWORD"
 
 // position setting
 #define UDP_BROADCAST_INTERVAL 100  // Minimum interval between UDP broadcasts (ms)
 #define ANCHOR_DATA_TIMEOUT 5000   // Timeout for anchor data in milliseconds
 
+#define debug false
+
+// 每個tag預留的窗口時間
+unsigned long slotDuration = 30;
+int myTagID = (int)TAG_ADDR[1] - '0';
+#define window_mode false
+
 /* ================================ */
 /* ===== DW3000 Basic Config ====== */
 /* ================================ */
+
+// 延遲時間
+#if STS_ENCRYPTION == false && AES_ENCRYPTION == false // non-encryption
+    #define POLL_TX_TO_RESP_RX_DLY_UUS 240
+    #define RESP_RX_TIMEOUT_UUS 400
+    #define RESP_MSG_POLL_RX_TS_IDX 10
+    #define RESP_MSG_RESP_TX_TS_IDX 14
+#elif STS_ENCRYPTION == true && AES_ENCRYPTION == false // STS
+    #define POLL_TX_TO_RESP_RX_DLY_UUS 500
+    #define RESP_RX_TIMEOUT_UUS 1500
+    #define RESP_MSG_POLL_RX_TS_IDX 10
+    #define RESP_MSG_RESP_TX_TS_IDX 14   
+#elif STS_ENCRYPTION == false && AES_ENCRYPTION == true // AES
+    #define POLL_TX_TO_RESP_RX_DLY_UUS 1720
+    #define RESP_RX_TIMEOUT_UUS 250
+    #define RESP_MSG_POLL_RX_TS_IDX 0
+    #define RESP_MSG_RESP_TX_TS_IDX 4  
+
+#else // this isn't test. Do not use this section.
+    #define POLL_TX_TO_RESP_RX_DLY_UUS 1000
+    #define RESP_RX_TIMEOUT_UUS 250
+    #define RESP_MSG_POLL_RX_TS_IDX 0
+    #define RESP_MSG_RESP_TX_TS_IDX 4  
+#endif
 
 #define PIN_RST 27
 #define PIN_IRQ 34
@@ -52,18 +90,27 @@
 
 #define STS_OFFSET 10.65  // STS mode 偏差
 
-const uint8_t PAN_ID[] = { 0xCA, 0xDE };     
-const uint8_t TAG_ADDR[] = { 'T', '1' };      
+const uint8_t PAN_ID[] = { 0x21, 0x43 };       
+
 extern dwt_txconfig_t txconfig_options;
+
+static bool isExpectedFrame(const uint8_t *frame, const uint32_t len);
 
 static double tof;
 static double distance;
 
 /* IV 查表去重複設定 */
-#define IV_TABLE_SIZE 5005 
+/*
+#define IV_TABLE_SIZE 10000
 static uint32_t iv_history[IV_TABLE_SIZE];
+
+#define MAX_COLLISION_RECORD 1000  // 記錄前 1000 筆重複的 IV
+static uint32_t collision_history[MAX_COLLISION_RECORD];
+static uint16_t collision_count = 0;
+
 static uint16_t iv_count = 0;  // 記錄目前已經存了多少筆
 static uint16_t write_idx = 0; // 記錄下一次要寫入的位置
+*/
 
 // 定位
 int current_anchor = 0;
@@ -138,6 +185,7 @@ static int currentAnchorIndex = 0;
     const int UDP_PORT = 8001;  // Choose a UDP port
     const IPAddress BROADCAST_IP(255, 255, 255, 255);  // Broadcast address
 #endif
+
 
 /* ================================ */
 /* ======== STS Encryption ======== */
@@ -283,25 +331,33 @@ uint32_t          status_reg;
 /* ================================ */
 
 /* Messages */
-static uint8_t tx_poll_msg[12 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 'A', '1', 0xE0, 0, 0};
-static uint8_t rx_resp_msg[20 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 'A', '1', TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static uint8_t tx_poll_msg[12 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 0, 0, 0xE0, 0, 0};
+static uint8_t rx_resp_msg[20 + Padding] = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 0, 0, TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static uint8_t rx_buffer[RX_BUF_LEN];
 
 /* Initiator data */
-#define DEST_ADDR       0x1122334455667788 /* this is the address of the responder */
-#define SRC_ADDR        0x8877665544332211 /* this is the address of the initiator */
-#define DEST_PAN_ID     0x4321             /* this is the PAN ID used in this example */
+uint64_t SRC_ADDR =     0x1122334455660000; /* this is the address of the initiator */
+uint64_t DEST_ADDR =    0x8877665544330000; /* this is the address of the responder */
+#define DEST_PAN_ID     0x4321              /* this is the PAN ID used in this example */
 
 /* Frame counter */
 static uint32_t frame_seq_nb = 0;
 
 /* function */
-bool isExpectedFrame(uint8_t *buffer) {
-    uint8_t saved_sn = buffer[2];
-    buffer[2] = 0;
-    bool match = (memcmp(buffer, rx_resp_msg, 10) == 0);
-    buffer[2] = saved_sn;
-    return match;
+static bool isExpectedFrame(const uint8_t *frame, const uint32_t len) {
+    if (len < (7 + 2))
+        return false;
+
+    // 檢查基本訊息格式 (包含 PAN ID 等)
+    /*if (memcmp(frame, rx_resp_msg, ALL_MSG_COMMON_LEN) != 0)
+        return false;*/
+    if (frame[3] == PAN_ID[0] && frame[4] == PAN_ID[1] && frame[9] == 0xE1) {
+        // 檢查這個回應是不是給我的 (Tag ID 是否相符)
+        if (frame[7] == TAG_ADDR[0] && frame[8] == TAG_ADDR[1]) {
+            return true;
+        }
+    }
+    return true;
 }
 
 void crypto_load(int padding) {
@@ -314,43 +370,147 @@ void crypto_load(int padding) {
     while(count--) { __asm__("nop"); }
 }
 
-// 檢查並插入新的 IV 到歷史記錄
-bool iv_table_insert_if_new(uint32_t new_iv) {
-    // 檢查重複
-    for (int i = 0; i < iv_count; i++) {
-        if (iv_history[i] == new_iv) return false; 
-    }
 
-    iv_history[write_idx] = new_iv;
-    write_idx++;
+/* ================================ */
+/* ======= Non-Repeating IV ======= */
+/* ================================ */
 
-    // 更新目前總筆數
-    if (iv_count < IV_TABLE_SIZE) {
-        iv_count++;
-    }
+// vector IV storage 
+/*
+1 Byte - 256
+2 Byte - 55290
+*/
+#define MAX_IV 55290
+#define MAX_COLLISION 500
 
-    // 避免易位
-    if (write_idx >= IV_TABLE_SIZE) {
-        write_idx = 0; 
-    }
+static uint16_t* iv_history = nullptr;
+static uint32_t iv_history_count = 0;
 
-    return true; 
-}
+static uint16_t collision_history[MAX_COLLISION];
+static uint32_t collision_count = 0;
 
-// 生成不重複隨機 IV 並填入 frame_counter
+uint32_t searchTime = 0;
+
 bool set_unique_random_iv() {
-    for (int tries = 0; tries < 100000; tries++) {
-        uint32_t r = esp_random();
-        if (iv_table_insert_if_new(r)) {
-            // 寫入 MAC
-            mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(r & 0xFF);
-            mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = (uint8_t)((r >> 8) & 0xFF);
-            mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = (uint8_t)((r >> 16) & 0xFF);
-            mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = (uint8_t)((r >> 24) & 0xFF);
-            return true;
+    
+    uint32_t startTime = micros();
+    bool found = false;
+
+    while (!found) {
+        // 隨機IV
+        uint32_t iv = esp_random();
+
+        // 壓縮隨機範圍
+        switch (Random_Nonce_Byte) {
+            case 1: iv = iv & 0xFF; break;       // 2^8  = 256
+            case 2: iv = iv & 0xFFFF; break;     // 2^16 = 65536
+            case 3: iv = iv & 0xFFFFFF; break; 
+            case 4: iv = iv & 0xFFFFFFFF; break;           
+            default: break; 
+        }
+
+        // 檢查重複 O(N)
+        auto it = std::find(iv_history, iv_history + iv_history_count, (uint16_t)iv);
+
+        // 找到重複
+        if (it != (iv_history + iv_history_count)) {
+            
+            // 紀錄重複
+            if (collision_count < MAX_COLLISION) {
+                collision_history[collision_count] = (uint16_t)iv;
+                collision_count++;
+            }
+            
+        } 
+        // 沒有重複
+        else {
+            
+            // 紀錄iv
+            iv_history[iv_history_count] = (uint16_t)iv;
+            iv_history_count++;
+            found = true;
+
+            // 寫入 MAC 暫存器
+            switch (Random_Nonce_Byte) {
+                case 1:
+                    // 僅使用低 8 位元
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(iv & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = 0;
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = 0;
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = 0;
+                    break;
+
+                case 2:
+                    // 使用低 16 位元
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(iv & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = (uint8_t)((iv >> 8) & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = 0;
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = 0;
+                    break;
+
+                case 3:
+                    // 使用低 24 位元
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(iv & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = (uint8_t)((iv >> 8) & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = (uint8_t)((iv >> 16) & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = 0;
+                    break;
+
+                case 4:
+                    // 完整 32 位元隨機值
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[0] = (uint8_t)(iv & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[1] = (uint8_t)((iv >> 8) & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[2] = (uint8_t)((iv >> 16) & 0xFF);
+                    mac_frame.mhr_802_15_4.aux_security.frame_counter[3] = (uint8_t)((iv >> 24) & 0xFF);
+                    break;
+
+                default:
+                    memset(mac_frame.mhr_802_15_4.aux_security.frame_counter, 0, 4);
+                    break;
+            }
+
+            // 紀錄超過
+            if (iv_history_count >= MAX_IV) {
+                iv_history_count = 0;
+                memset(iv_history, 0, sizeof(iv_history)); // 清空
+                
+            }
+        }
+        
+        // 防呆
+        if (iv_history_count >= 65536) { 
+            memset(iv_history, 0, sizeof(iv_history)); // 清空
+            break; 
         }
     }
-    return false;
+
+    searchTime = micros() - startTime; 
+    return true;
+}
+
+
+// 匯出重複IV
+void exportCollisionsJSON() {
+    Serial.println("\n--- COLLISION_DATA_START ---");
+    Serial.print("{\"total_collisions\": ");
+    Serial.print(collision_count);
+    Serial.println(", \"data\": [");
+    
+    int i = 0;
+    for (uint32_t iv : collision_history) {
+        Serial.print(iv);
+        if (i < collision_count - 1) Serial.print(", ");
+        
+        // 每 10 筆換行
+        if ((i + 1) % 10 == 0) {
+            Serial.println();
+            yield(); 
+        }
+        i++;
+    }
+    
+    Serial.println("\n]}");
+    Serial.println("--- COLLISION_DATA_END ---");
 }
 
 /* Function to convert all anchor data to JSON string */
@@ -481,6 +641,12 @@ void broadcastUDP(const char* jsonData) {
 /* ================================ */
 
 void setup() {
+    
+    // heap
+    iv_history = new uint16_t[MAX_IV];
+
+
+
     Serial.begin(115200);
 
     #ifdef ENABLE_WIFI
@@ -527,6 +693,13 @@ void setup() {
 
     /* AES */
     if(AES_ENCRYPTION){
+        
+        /* automatically change the SRC_ADDR */
+        SRC_ADDR = (SRC_ADDR & 0xFFFFFFFFFFFF0000) | 
+                   ((uint64_t)TAG_ADDR[0] << 8) | 
+                   (uint64_t)TAG_ADDR[1];
+        //Serial.println(PriUint64<HEX>(SRC_ADDR));
+
         /* Configure the TX spectrum parameters (power, PG delay and PG count) */
         dwt_configuretxrf(&txconfig_options);
 
@@ -555,13 +728,32 @@ void setup() {
     }
     else
     {
-        /* Antenna delay */
+        // Enabling LEDs here for debug so that for each TX the D1 LED will flash on DW3000 red eval-shield boards.
+        dwt_setleds(DWT_LEDS_ENABLE | DWT_LEDS_INIT_BLINK);
+
+        /* Configure the TX spectrum parameters (power, PG delay and PG count) */
+        dwt_configuretxrf(&txconfig_options);
+
+        /* Apply default antenna delay value. See NOTE 2 below. */
         dwt_setrxantennadelay(RX_ANT_DLY);
         dwt_settxantennadelay(TX_ANT_DLY);
 
-        /* 設定 RX 延遲及 timeout */
+        /* Set expected response's delay and timeout. See NOTE 1 and 5 below.
+        * As this example only handles one incoming frame with always the same delay and timeout, those values can be set here once for all. */
         dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
         dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
+
+        /* Next can enable TX/RX states output on GPIOs 5 and 6 to help debug, and also TX/RX LEDs
+        * Note, in real low power applications the LEDs should not be used. */
+        dwt_setlnapamode(DWT_LNA_ENABLE | DWT_PA_ENABLE);
+
+        Serial.println("Range RX");
+        Serial.println("Setup over........");
+
+        // Initialize anchor array
+        for (int i = 0; i < MAX_ANCHORS; i++) {
+            anchorArray[i].active = false;
+        }
     }
 
     
@@ -574,36 +766,41 @@ void setup() {
 
 void loop() {
 
+    unsigned long currentMillis = millis();
+    unsigned long cycleTime = currentMillis % (slotDuration * totalTags);
+
+    if ((cycleTime >= (myTagID - 1) * slotDuration && cycleTime < myTagID * slotDuration) || window_mode) {
+
     // 取得目前要測距的 Anchor 名稱 (例如 'A', '1')
-    char targetID0 = ANCHOR_LIST[currentAnchorIndex][0];
-    char targetID1 = ANCHOR_LIST[currentAnchorIndex][1];
+    char AncID0 = ANCHOR_LIST[currentAnchorIndex][0];
+    char AncID1 = ANCHOR_LIST[currentAnchorIndex][1];
 
-    // 更新加密用的 MAC Frame 目的地 (影響 AES Nonce 與 Header)
-    // 這裡我們把目標 ID 填入 DEST_ADDR 的低位元組 (假設高位元組固定)
-    mac_frame.mhr_802_15_4.dest_addr[0] = targetID1; // '1'
-    mac_frame.mhr_802_15_4.dest_addr[1] = targetID0; // 'A'
+    DEST_ADDR = (DEST_ADDR & 0xFFFFFFFFFFFF0000) |
+                   ((uint64_t)AncID0 << 8) |
+                   (uint64_t) AncID1;
 
-    // 更新非加密模式用的 tx_poll_msg (如果 AES 沒開時會用到)
-    tx_poll_msg[7] = targetID0;
-    tx_poll_msg[8] = targetID1;
+    if(debug){
+        Serial.println(PriUint64<HEX>(DEST_ADDR));
+        Serial.println(PriUint64<HEX>(SRC_ADDR));
+    }
+
+    // 更新 tx_poll_msg (如果 AES 沒開時會用到)
+    // tx_poll_msg = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], TAG_ADDR[0], TAG_ADDR[1], 0, 0, 0xE0, 0, 0};
+    // rx_resp_msg = {0x41, 0x88, 0, PAN_ID[0], PAN_ID[1], 0, 0, TAG_ADDR[0], TAG_ADDR[1], 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    tx_poll_msg[7] = AncID0; tx_poll_msg[8] = AncID1;
+    rx_resp_msg[5] = AncID0; rx_resp_msg[6] = AncID1;
     
-    // 更新預期接收的 ID (用於後續驗證)
-    rx_resp_msg[5] = targetID0;
-    rx_resp_msg[6] = targetID1;
-
-    /* 距離設定 */
-    static float smooth_dist = 0;
-    static bool first_run = true;
-
+    
     /* AES setting */
     if(AES_ENCRYPTION){
 
         // 生成不重複隨機 IV 並填入
-        if(!set_unique_random_iv()) { 
-            Serial.println("Error: IV Table Full!"); 
-            while(1); 
+        if(Random_Nonce_Byte != 0){    
+            set_unique_random_iv();
+            Serial.printf("TEST_RESEARCH, Current_IV_Size: %d, Search_Delay_us: %u\n", 
+                      iv_history_count, searchTime);
         }
-
+        
         /* Program the correct key to be used */
         dwt_set_keyreg_128(&keys_options[INITIATOR_KEY_INDEX-1]);
         /* Set the key index for the frame */
@@ -626,12 +823,12 @@ void loop() {
         if (status<0)
         {
             test_run_info((unsigned char *)"AES length error");
-            while (1);/* Error */
+            return;/* Error */
         }
         else if (status & AES_ERRORS)
         {
             test_run_info((unsigned char *)"ERROR AES");
-            while (1);/* Error */
+            return;/* Error */
         }
 
         /* configure the frame control and start transmission */
@@ -657,16 +854,19 @@ void loop() {
     else
     {
         tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
-        dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
+        //dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
         dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0);
         dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1);
         dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
         //dwt_starttx(DWT_START_TX_DELAYED);
     }
-
+    
     while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {};
+    
+    frame_seq_nb++;
 
     if (status_reg & SYS_STATUS_RXFCG_BIT_MASK) {
+        uint32_t frame_len;
         
         /* 解密 respone */
         if(AES_ENCRYPTION){
@@ -674,8 +874,7 @@ void loop() {
             dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
 
             /* Read data length that was received */
-            uint32_t frame_len = dwt_read32bitreg(RX_FINFO_ID)&RXFLEN_MASK;
-
+            frame_len = dwt_read32bitreg(RX_FINFO_ID)&RXFLEN_MASK;
             /* A frame has been received: firstly need to read the MHR and check this frame is what we expect:
              * the destination address should match our source address (frame filtering can be configured for this check,
              * however that is not part of this example); then the header needs to have security enabled.
@@ -683,16 +882,23 @@ void loop() {
              * */
             aes_config.mode=AES_Decrypt;
             PAYLOAD_PTR_802_15_4(&mac_frame)=rx_buffer;/* Set the MAC pyload ptr */
-
+    
             /* This example assumes that initiator and responder are sending encrypted data */
             status=rx_aes_802_15_4(&mac_frame,frame_len,&aes_job_rx,sizeof(rx_buffer),keys_options,DEST_ADDR,SRC_ADDR,&aes_config);
-            if (status!=AES_RES_OK)
-            {
-              do {
+            // 收到不是給我的封包，或是解密失敗
+            if (status != AES_RES_OK) {
+                /*
+                // 清理狀態暫存器，準備下一輪接收
+                //cleanupInvalidAnchors();
+                currentAnchorIndex = (currentAnchorIndex + 1) % NUM_ANCHORS;
+                test_run_info((unsigned char *)"Frame not for us");
+                return; 
+                */
+                /* report any errors */
                 switch (status)
                 {
                     case AES_RES_ERROR_LENGTH:
-                        test_run_info((unsigned char *)"Length AES error");
+                        test_run_info((unsigned char *)"AES length error");
                         break;
                     case AES_RES_ERROR:
                         test_run_info((unsigned char *)"ERROR AES");
@@ -702,15 +908,15 @@ void loop() {
                         break;
                     case AES_RES_ERROR_IGNORE_FRAME:
                         test_run_info((unsigned char *)"Frame not for us");
-                        continue;//Got frame not for us
+                        return;//Got frame with wrong destination address
                 }
-              } while (1);
+                return;
             }
-
             /* Check that the frame is the expected response from the companion "SS TWR AES responder" example.
              * ignore the 8 first bytes of the response message as they contain the poll and response timestamps */
-            if (memcmp(&rx_buffer[START_RECEIVE_DATA_LOCATION], &rx_resp_msg[START_RECEIVE_DATA_LOCATION],
-                    aes_job_rx.payload_len-START_RECEIVE_DATA_LOCATION) == 0)
+            //if (memcmp(&rx_buffer[START_RECEIVE_DATA_LOCATION], &rx_resp_msg[START_RECEIVE_DATA_LOCATION],
+            //        aes_job_rx.payload_len-START_RECEIVE_DATA_LOCATION) == 0)
+            if (rx_buffer[9] == 0xE1)
             {
                 uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
                 int32_t rtd_init, rtd_resp;
@@ -734,19 +940,23 @@ void loop() {
                 // rtd_init = resp_rx_ts - poll_tx_ts;
                 // rtd_resp = resp_tx_ts - poll_rx_ts;
 
-                tof = (((t2 - t1) - (t4 - t3) * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
-                distance = tof * SPEED_OF_LIGHT;
-                double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
-                double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
+                double ppm_jitter = (double)random(-2, 2) / 1e6; 
+                double indirect_tof_error = 0;//((double)searchTime / 1e6 * ppm_jitter);
 
+                tof = (((t2 - t1) - (t4 - t3) * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
+                distance = (tof + indirect_tof_error) * SPEED_OF_LIGHT;
+                if(distance < 0) { distance = 0; }
+                double poll_time_ns = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
+                double resp_time_ns = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
+                /*
                 Serial.printf(
                     "DATA, %3.2f, %3.2f\n",
-                    poll_time_us + resp_time_us, distance
+                    poll_time_ns + resp_time_ns, distance
                 );
-                
+                */
                 // 在 Serial.printf 之後加入：
-                char currentName[3] = { targetID0, targetID1, 0 };
-                updateAnchorData(currentName, distance, tof);
+                char currentName[3] = { AncID0, AncID1, 0 };
+                updateAnchorData(currentName, distance, poll_time_ns + resp_time_ns);//+ searchTime*1000); // - - tof
                 
                 // 移動到下一個 Anchor 並進行清理
                 cleanupInvalidAnchors();
@@ -754,7 +964,8 @@ void loop() {
                 // 每一輪測距結束後，檢查是否需要送出 JSON
                 if (activeAnchors >= MIN_ANCHORS_TO_SEND) {
                     formatPositionDataToJson(jsonBuffer, sizeof(jsonBuffer));
-                    Serial.printf(jsonBuffer);
+                    Serial.println(jsonBuffer);
+
                     #ifdef ENABLE_WIFI
                         broadcastUDP(jsonBuffer);
                     #endif
@@ -764,8 +975,17 @@ void loop() {
             }
         }
         else{
-            dwt_readrxdata(rx_buffer, 24, 0);
-            if (isExpectedFrame(rx_buffer)) {
+            
+            /* Clear good RX frame event in the DW IC status register. */
+            dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
+            
+            /* A frame has been received, read it into the local buffer. */
+            frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
+            if (frame_len <= sizeof(rx_buffer))
+            {
+                dwt_readrxdata(rx_buffer, frame_len, 0);
+                rx_buffer[2] = 0;
+                if (isExpectedFrame(rx_buffer, frame_len)) {
                 
                 // 計算 tof 距離
                 uint32_t t1, t2, t3, t4;
@@ -779,27 +999,51 @@ void loop() {
                 resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &t3);
                 resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &t4);
 
-                double raw = (((t2 - t1) - (t4 - t3) * (1 - ratio)) / 2.0) * DWT_TIME_UNITS * 299792458.0;
+                double raw = (((t2 - t1) - (t4 - t3) * (1 - ratio)) / 2.0) * DWT_TIME_UNITS;
+                double distance = raw * SPEED_OF_LIGHT;
+                if(distance < 0) { distance = 0; }
+
                 double poll_time_us = (double)(t4 - t3) * DWT_TIME_UNITS * 1e9;
                 double resp_time_us = (double)(t2 - t1) * DWT_TIME_UNITS * 1e9;
 
-                if (raw > 5.0 && STS_ENCRYPTION) raw -= STS_OFFSET; // STS mode 偏差 (11m) 
+                if (raw > 5.0 && STS_ENCRYPTION) distance -= STS_OFFSET; // STS mode 偏差 (11m) 
 
-                if (raw > 0 && raw < 40.0) {
-                    if (first_run) { smooth_dist = raw; first_run = false; }
-                    else { smooth_dist = (smooth_dist * 0.8) + (raw * 0.2); }
+                char name[3] = { 0 };
+                memcpy(name, rx_buffer + 5, 2);
+
+                /* Display computed distance on LCD. */
+                char dist_str[32];
+                //snprintf(dist_str, sizeof(dist_str), "A:%s, DIST: %3.2f m", name, distance);
+                //test_run_info((unsigned char *)dist_str);
+
+                /* Update anchor data */
+                updateAnchorData(name, distance, poll_time_us + resp_time_us); // - - raw
+
+                /* Clean up invalid anchors */
+                cleanupInvalidAnchors();
+
+                /* If we have enough anchors, send position data */
+                if (activeAnchors >= MIN_ANCHORS_TO_SEND) {
+                    char jsonBuffer[512];
+                    formatPositionDataToJson(jsonBuffer, 512);
+                    Serial.println(jsonBuffer);  // Serial output without rate limiting
+                    #ifdef ENABLE_WIFI
+                        broadcastUDP(jsonBuffer);    // UDP broadcast with rate limiting
+                    #endif
                 }
+
+                
+                /*
                 Serial.printf(
                     "DATA, %3.2f, %3.2f\n",
-                    poll_time_us + resp_time_us, raw
+                    poll_time_us + resp_time_us, distance
                 );
+                */
 
+                }
+            //dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
             }
-            dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
         }
-
-        
-
     } 
     else
     {
@@ -807,6 +1051,17 @@ void loop() {
         dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
     }
     currentAnchorIndex = (currentAnchorIndex + 1) % NUM_ANCHORS;
-    frame_seq_nb++;
     delay(RNG_DELAY_MS);
+
+    }
+
+    if (Serial.available() > 0) {
+        char cmd = Serial.read();
+        if (cmd == 's') { // 輸入 's' 暫停並匯出
+            Serial.println("System Paused. Exporting Data...");
+            exportCollisionsJSON();
+            while(Serial.read() != 'r'); // 卡住直到輸入 'r' 才 Resume
+            Serial.println("System Resumed.");
+        }
+    }
 }
