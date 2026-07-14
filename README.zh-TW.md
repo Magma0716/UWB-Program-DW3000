@@ -12,7 +12,8 @@
 ---
 `點此處按鈕，可切換語言！！`
 
-[![English](https://img.shields.io/badge/Language-English-blue)](README.md) [![繁體中文](https://img.shields.io/badge/Language-繁體中文-green)](README.zh-TW.md)
+[![English](https://img.shields.io/badge/Language-English-blue)](README.md) 
+[![繁體中文](https://img.shields.io/badge/Language-繁體中文-green)](README.zh-TW.md)
 
 ---
 
